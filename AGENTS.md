@@ -25,8 +25,10 @@ Current state: minimal v1 — opens a real browser and lets the user control it.
 - `cargo run` opens Chrome and keeps it open until the window is closed or Ctrl+C.
 - Optional URL arg: `cargo run -- https://example.com`. Failed navigation warns
   but keeps the session alive.
-- `--capture` writes the auto-detected products to `captures/capture-<timestamp>.json`
-  as soon as a grid is found (re-checks on later polls if the page is still loading).
+- Captures are automatic: as soon as a grid is detected on the current page the
+  products are written to `captures/capture-<timestamp>.json`, and a new
+  timestamped file is written again whenever the detected products (prices or
+  names) change on a later poll.
 
 ## Gotchas
 - `captures/` is gitignored — write capture output there; do not expect it committed.

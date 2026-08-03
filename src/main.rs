@@ -5,12 +5,12 @@ use thirtyfour::prelude::*;
 
 use price_hunter::capture;
 use price_hunter::detect;
-use price_hunter::detect::Detection;
+use price_hunter::detect::{Detection, Product};
 
 #[tokio::main]
 async fn main() -> WebDriverResult<()> {
     let args: Vec<String> = env::args().collect();
-    let (url, capture) = parse_args(&args);
+    let url = parse_args(&args);
     let driver = WebDriver::managed(DesiredCapabilities::chrome()).await?;
     navigate_to_arg(&driver, url).await;
 
@@ -19,7 +19,7 @@ async fn main() -> WebDriverResult<()> {
     let mut state = LoopState {
         last_source: None,
         detection: None,
-        capture_written: !capture,
+        last_capture_products: None,
     };
     while !poll_closed(&driver).await {
         refresh(&driver, &mut state).await;
@@ -28,16 +28,14 @@ async fn main() -> WebDriverResult<()> {
     driver.quit().await
 }
 
-fn parse_args(args: &[String]) -> (Option<String>, bool) {
-    let capture = args.iter().any(|a| a == "--capture");
-    let url = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned();
-    (url, capture)
+fn parse_args(args: &[String]) -> Option<String> {
+    args.iter().skip(1).find(|a| !a.starts_with('-')).cloned()
 }
 
 struct LoopState {
     last_source: Option<String>,
     detection: Option<Detection>,
-    capture_written: bool,
+    last_capture_products: Option<Vec<Product>>,
 }
 
 async fn navigate_to_arg(driver: &WebDriver, url: Option<String>) {
@@ -64,7 +62,7 @@ async fn poll_closed(driver: &WebDriver) -> bool {
 async fn refresh(driver: &WebDriver, state: &mut LoopState) {
     let source = driver.source().await.ok();
     update_state(state, source);
-    capture_if_requested(driver, state).await;
+    capture_if_needed(driver, state).await;
 }
 
 fn update_state(state: &mut LoopState, source: Option<String>) {
@@ -80,13 +78,13 @@ fn update_state(state: &mut LoopState, source: Option<String>) {
     }
 }
 
-async fn capture_if_requested(driver: &WebDriver, state: &mut LoopState) {
-    if state.capture_written {
-        return;
-    }
+async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
     let Some(detection) = &state.detection else {
         return;
     };
+    if state.last_capture_products.as_ref() == Some(&detection.products) {
+        return;
+    }
     let url = driver
         .current_url()
         .await
@@ -98,5 +96,5 @@ async fn capture_if_requested(driver: &WebDriver, state: &mut LoopState) {
         detection.products.len(),
         path.display()
     );
-    state.capture_written = true;
+    state.last_capture_products = Some(detection.products.clone());
 }

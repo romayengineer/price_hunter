@@ -319,6 +319,10 @@ fn guess_name(html: &Html, id: NodeId, container_id: NodeId) -> String {
     }
 }
 
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn find_name_in_subtree(node: &NodeRef<'_, Node>) -> Option<String> {
     let mut best_block = String::new();
     for n in node.descendants() {
@@ -339,7 +343,7 @@ fn find_name_in_subtree(node: &NodeRef<'_, Node>) -> Option<String> {
                         _ => None,
                     })
                     .collect();
-                let text = text.trim().to_string();
+                let text = collapse_whitespace(&text);
                 if !text.is_empty() && !contains_confident_price(&text) {
                     return Some(text);
                 }
@@ -353,13 +357,13 @@ fn find_name_in_subtree(node: &NodeRef<'_, Node>) -> Option<String> {
                 }
             }
             Node::Text(t) => {
-                let s: &str = t.text.trim();
+                let s = collapse_whitespace(&t.text);
                 if !s.is_empty()
-                    && !contains_confident_price(s)
+                    && !contains_confident_price(&s)
                     && s.chars().any(|c| c.is_alphabetic())
                     && s.chars().count() > best_block.chars().count()
                 {
-                    best_block = s.to_string();
+                    best_block = s;
                 }
             }
             _ => {}

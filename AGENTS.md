@@ -26,9 +26,9 @@ Current state: minimal v1 — opens a real browser and lets the user control it.
 - Optional URL arg: `cargo run -- https://example.com`. Failed navigation warns
   but keeps the session alive.
 - Captures are automatic: as soon as a grid is detected on the current page the
-  products are written to `captures/capture-<timestamp>.json`, and a new
-  timestamped file is written again whenever the detected products (prices or
-  names) change on a later poll.
+  products are written to `captures/<domain>/capture-<timestamp>.json` (organized
+  by site hostname), and a new timestamped file is written again whenever the
+  detected products (prices or names) change on a later poll.
 
 ## Gotchas
 - `captures/` is gitignored — write capture output there; do not expect it committed.

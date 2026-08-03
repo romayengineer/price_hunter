@@ -64,3 +64,4 @@ fn extracts_all_prices_from_fabilu_live() {
     assert!(detection.products.len() >= 12, "expected at least 12 products");
     assert!(detection.products.iter().all(|p| p.price > 0.0));
 }
+

@@ -1032,6 +1032,7 @@ dependencies = [
  "thirtyfour",
  "tokio",
  "ureq",
+ "url",
 ]
 
 [[package]]

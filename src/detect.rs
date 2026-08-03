@@ -475,5 +475,64 @@ mod tests {
         assert_eq!(detection.products[0].price, 1234.0);
         assert_eq!(detection.products[1].price, 5678.0);
     }
+
+    #[test]
+    fn parse_price_woocommerce_thousands() {
+        assert_eq!(parse_price("8.190"), Some(8190.0));
+        assert_eq!(parse_price("12.990"), Some(12990.0));
+        assert_eq!(parse_price("3.450"), Some(3450.0));
+        assert_eq!(parse_price("8,190"), Some(8190.0));
+    }
+
+    #[test]
+    fn detects_woocommerce_price_grid() {
+        let html = r#"
+        <html><body>
+          <div class="product-grid">
+            <div class="card"><a href="/a">Alpha</a><bdi><span class="woocommerce-Price-currencySymbol">$</span>8.190</bdi></div>
+            <div class="card"><a href="/b">Beta</a><bdi><span class="woocommerce-Price-currencySymbol">$</span>12.990</bdi></div>
+            <div class="card"><a href="/c">Gamma</a><bdi><span class="woocommerce-Price-currencySymbol">$</span>3.450</bdi></div>
+          </div>
+        </body></html>
+        "#;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(detection.container.classes, vec!["product-grid"]);
+        assert_eq!(detection.products.len(), 3);
+        assert_eq!(detection.products[0].name, "Alpha");
+        assert_eq!(detection.products[1].name, "Beta");
+        assert_eq!(detection.products[2].name, "Gamma");
+        assert_eq!(detection.products[0].price, 8190.0);
+        assert_eq!(detection.products[1].price, 12990.0);
+        assert_eq!(detection.products[2].price, 3450.0);
+        assert_eq!(detection.products[0].price_text, "8.190");
+        assert_eq!(detection.products[1].price_text, "12.990");
+        assert_eq!(detection.products[2].price_text, "3.450");
+    }
+
+    #[test]
+    fn currency_symbol_alone_is_not_a_price() {
+        assert!(number_tokens("$").is_empty());
+        let price = classify_div("$8.190").expect("price should be found");
+        assert_eq!(price.len(), 1);
+        assert_eq!(price[0].value, 8190.0);
+        assert_eq!(price[0].text, "8.190");
+    }
+
+    #[test]
+    fn woocommerce_decimal_comma() {
+        let html = r#"
+        <html><body>
+          <div class="product-grid">
+            <div class="card"><a href="/x">Kappa</a><bdi><span class="woocommerce-Price-currencySymbol">€</span>12,99</bdi></div>
+            <div class="card"><a href="/y">Lambda</a><bdi><span class="woocommerce-Price-currencySymbol">€</span>24,50</bdi></div>
+          </div>
+        </body></html>
+        "#;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(detection.products.len(), 2);
+        assert_eq!(detection.products[0].price, 12.99);
+        assert_eq!(detection.products[0].price_text, "12,99");
+        assert_eq!(detection.products[1].price, 24.5);
+    }
 }
 

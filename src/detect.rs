@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ego_tree::NodeId;
+use ego_tree::{NodeId, NodeRef};
 use scraper::Html;
 use scraper::node::{Element, Node};
 use serde::Serialize;
@@ -97,10 +97,7 @@ fn classify_div(text: &str) -> Option<Vec<Price>> {
             })
         })
         .collect();
-    if confident.len() >= 2 {
-        return None;
-    }
-    if confident.len() == 1 {
+    if !confident.is_empty() {
         return Some(confident);
     }
     let bare: Vec<&str> = tokens
@@ -108,7 +105,7 @@ fn classify_div(text: &str) -> Option<Vec<Price>> {
         .filter(|t| !has_separator(t) && (2..=7).contains(&t.len()))
         .map(|s| s.as_str())
         .collect();
-    if bare.len() == 1 {
+    if bare.len() == 1 && !text_has_content_other_than(text, bare[0]) {
         let t = bare[0];
         return Some(vec![Price {
             value: t.parse().ok()?,
@@ -118,10 +115,14 @@ fn classify_div(text: &str) -> Option<Vec<Price>> {
     None
 }
 
-fn contains_price(text: &str) -> bool {
-    number_tokens(text)
-        .iter()
-        .any(|t| has_separator(t) || (2..=7).contains(&t.len()))
+fn text_has_content_other_than(text: &str, token: &str) -> bool {
+    text.replacen(token, "", 1)
+        .chars()
+        .any(|c| c.is_alphanumeric() || matches!(c, '-' | '%'))
+}
+
+fn contains_confident_price(text: &str) -> bool {
+    number_tokens(text).iter().any(|t| has_separator(t))
 }
 
 fn has_separator(token: &str) -> bool {
@@ -283,9 +284,9 @@ fn extract_products(
         .iter()
         .filter(|(id, _)| is_descendant_of(html, *id, container_id))
         .map(|(id, prices)| {
-            let price = &prices[0];
+            let price = prices.last().expect("price div has a price");
             Product {
-                name: guess_name(html, *id),
+                name: guess_name(html, *id, container_id),
                 price_text: price.text.clone(),
                 price: price.value,
             }
@@ -300,18 +301,35 @@ fn is_descendant_of(html: &Html, id: NodeId, container_id: NodeId) -> bool {
     node.ancestors().any(|a| a.id() == container_id)
 }
 
-fn guess_name(html: &Html, id: NodeId) -> String {
-    let Some(node) = html.tree.get(id) else {
+fn guess_name(html: &Html, id: NodeId, container_id: NodeId) -> String {
+    let Some(mut node) = html.tree.get(id) else {
         return String::new();
     };
+    loop {
+        if let Some(name) = find_name_in_subtree(&node) {
+            return name;
+        }
+        let Some(parent) = node.parent() else {
+            return String::new();
+        };
+        if parent.id() == container_id {
+            return String::new();
+        }
+        node = parent;
+    }
+}
+
+fn find_name_in_subtree(node: &NodeRef<'_, Node>) -> Option<String> {
     let mut best_block = String::new();
     for n in node.descendants() {
         match n.value() {
             Node::Element(el) if el.name() == "a" => {
-                if let Some(t) = el.attr("title") {
-                    let t = t.trim();
-                    if !t.is_empty() {
-                        return t.to_string();
+                for attr in ["title", "aria-label"] {
+                    if let Some(t) = el.attr(attr) {
+                        let t = t.trim();
+                        if !t.is_empty() {
+                            return Some(t.to_string());
+                        }
                     }
                 }
                 let text: String = n
@@ -322,22 +340,23 @@ fn guess_name(html: &Html, id: NodeId) -> String {
                     })
                     .collect();
                 let text = text.trim().to_string();
-                if !text.is_empty() && !contains_price(&text) {
-                    return text;
+                if !text.is_empty() && !contains_confident_price(&text) {
+                    return Some(text);
                 }
             }
             Node::Element(el) if el.name() == "img" => {
                 if let Some(a) = el.attr("alt") {
                     let a = a.trim();
                     if !a.is_empty() {
-                        return a.to_string();
+                        return Some(a.to_string());
                     }
                 }
             }
             Node::Text(t) => {
                 let s: &str = t.text.trim();
                 if !s.is_empty()
-                    && !contains_price(s)
+                    && !contains_confident_price(s)
+                    && s.chars().any(|c| c.is_alphabetic())
                     && s.chars().count() > best_block.chars().count()
                 {
                     best_block = s.to_string();
@@ -346,7 +365,11 @@ fn guess_name(html: &Html, id: NodeId) -> String {
             _ => {}
         }
     }
-    best_block
+    if best_block.is_empty() {
+        None
+    } else {
+        Some(best_block)
+    }
 }
 
 #[cfg(test)]
@@ -449,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn two_prices_in_one_div_excluded() {
+    fn two_prices_card_picks_current_price() {
         let html = r#"
         <html><body>
           <div class="grid">
@@ -458,7 +481,10 @@ mod tests {
           </div>
         </body></html>
         "#;
-        assert!(detect_grid(html).is_none());
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(detection.products.len(), 2);
+        assert_eq!(detection.products[0].price, 12.99);
+        assert_eq!(detection.products[1].price, 22.99);
     }
 
     #[test]
@@ -535,4 +561,5 @@ mod tests {
         assert_eq!(detection.products[1].price, 24.5);
     }
 }
+
 

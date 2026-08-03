@@ -1,12 +1,11 @@
-mod capture;
-mod detect;
-
 use std::env;
 use std::time::Duration;
 
 use thirtyfour::prelude::*;
 
-use crate::detect::Detection;
+use price_hunter::capture;
+use price_hunter::detect;
+use price_hunter::detect::Detection;
 
 #[tokio::main]
 async fn main() -> WebDriverResult<()> {

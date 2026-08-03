@@ -60,7 +60,68 @@ fn find_price_divs(html: &Html) -> Vec<(NodeId, Vec<Price>)> {
             out.push((node.id(), prices));
         }
     }
-    out
+    merge_price_groups(html, &own, out)
+}
+
+fn merge_price_groups(
+    html: &Html,
+    own: &HashMap<NodeId, String>,
+    leaf: Vec<(NodeId, Vec<Price>)>,
+) -> Vec<(NodeId, Vec<Price>)> {
+    let leaf_ids: HashSet<NodeId> = leaf.iter().map(|(id, _)| *id).collect();
+    let mut merged_into: HashMap<NodeId, NodeId> = HashMap::new();
+    let nodes: Vec<_> = html.tree.nodes().collect();
+    for node in nodes.iter() {
+        let Node::Element(el) = node.value() else {
+            continue;
+        };
+        if !is_div(el) {
+            continue;
+        }
+        let id = node.id();
+        let price_children: Vec<NodeId> = node
+            .children()
+            .filter(|c| leaf_ids.contains(&c.id()))
+            .map(|c| c.id())
+            .collect();
+        if price_children.len() < 2 {
+            continue;
+        }
+        if !own.get(&id).map(|t| t.trim().is_empty()).unwrap_or(false) {
+            continue;
+        }
+        if price_children
+            .iter()
+            .any(|cid| price_div_is_named(html, *cid))
+        {
+            continue;
+        }
+        for cid in &price_children {
+            merged_into.insert(*cid, id);
+        }
+    }
+    let mut result: Vec<(NodeId, Vec<Price>)> = Vec::new();
+    for (cid, prices) in leaf {
+        let pid = merged_into.get(&cid).copied().unwrap_or(cid);
+        if let Some(entry) = result.iter_mut().find(|(eid, _)| *eid == pid) {
+            entry.1 = prices;
+        } else {
+            result.push((pid, prices));
+        }
+    }
+    result
+}
+
+fn price_div_is_named(html: &Html, id: NodeId) -> bool {
+    let Some(node) = html.tree.get(id) else {
+        return false;
+    };
+    if find_structured_name(&node).is_some() {
+        return true;
+    }
+    largest_text_block(&node)
+        .map(|b| b.chars().count() >= 6)
+        .unwrap_or(false)
 }
 
 fn own_texts(html: &Html) -> HashMap<NodeId, String> {
@@ -305,15 +366,21 @@ fn guess_name(html: &Html, id: NodeId, container_id: NodeId) -> String {
     let Some(mut node) = html.tree.get(id) else {
         return String::new();
     };
+    let mut best_block = String::new();
     loop {
-        if let Some(name) = find_name_in_subtree(&node) {
+        if let Some(name) = find_structured_name(&node) {
             return name;
         }
+        if let Some(block) = largest_text_block(&node)
+            && block.chars().count() > best_block.chars().count()
+        {
+            best_block = block;
+        }
         let Some(parent) = node.parent() else {
-            return String::new();
+            return best_block;
         };
         if parent.id() == container_id {
-            return String::new();
+            return best_block;
         }
         node = parent;
     }
@@ -323,8 +390,7 @@ fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn find_name_in_subtree(node: &NodeRef<'_, Node>) -> Option<String> {
-    let mut best_block = String::new();
+fn find_structured_name(node: &NodeRef<'_, Node>) -> Option<String> {
     for n in node.descendants() {
         match n.value() {
             Node::Element(el) if el.name() == "a" => {
@@ -356,17 +422,24 @@ fn find_name_in_subtree(node: &NodeRef<'_, Node>) -> Option<String> {
                     }
                 }
             }
-            Node::Text(t) => {
-                let s = collapse_whitespace(&t.text);
-                if !s.is_empty()
-                    && !contains_confident_price(&s)
-                    && s.chars().any(|c| c.is_alphabetic())
-                    && s.chars().count() > best_block.chars().count()
-                {
-                    best_block = s;
-                }
-            }
             _ => {}
+        }
+    }
+    None
+}
+
+fn largest_text_block(node: &NodeRef<'_, Node>) -> Option<String> {
+    let mut best_block = String::new();
+    for n in node.descendants() {
+        if let Node::Text(t) = n.value() {
+            let s = collapse_whitespace(&t.text);
+            if !s.is_empty()
+                && !contains_confident_price(&s)
+                && s.chars().any(|c| c.is_alphabetic())
+                && s.chars().count() > best_block.chars().count()
+            {
+                best_block = s;
+            }
         }
     }
     if best_block.is_empty() {
@@ -443,15 +516,15 @@ mod tests {
         let html = r#"
         <html><body>
           <div class="small-grid">
-            <div class="card"><span>1,00</span></div>
-            <div class="card"><span>2,00</span></div>
+            <div class="card"><a>Alpha</a><span>1,00</span></div>
+            <div class="card"><a>Beta</a><span>2,00</span></div>
           </div>
           <div class="big-grid">
-            <div class="card"><span>1,00</span></div>
-            <div class="card"><span>2,00</span></div>
-            <div class="card"><span>3,00</span></div>
-            <div class="card"><span>4,00</span></div>
-            <div class="card"><span>5,00</span></div>
+            <div class="card"><a>One</a><span>1,00</span></div>
+            <div class="card"><a>Two</a><span>2,00</span></div>
+            <div class="card"><a>Three</a><span>3,00</span></div>
+            <div class="card"><a>Four</a><span>4,00</span></div>
+            <div class="card"><a>Five</a><span>5,00</span></div>
           </div>
         </body></html>
         "#;
@@ -465,8 +538,8 @@ mod tests {
         let html = r#"
         <html><body>
           <div class="grid">
-            <div class="card"><span>499</span></div>
-            <div class="card"><span>899</span></div>
+            <div class="card"><div class="price"><span>499</span></div></div>
+            <div class="card"><div class="price"><span>899</span></div></div>
           </div>
         </body></html>
         "#;
@@ -480,8 +553,8 @@ mod tests {
         let html = r#"
         <html><body>
           <div class="grid">
-            <div class="card"><span class="old">19,99</span> <span class="new">12,99</span></div>
-            <div class="card"><span class="old">29,99</span> <span class="new">22,99</span></div>
+            <div class="card"><a>Alpha</a><span class="old">19,99</span> <span class="new">12,99</span></div>
+            <div class="card"><a>Beta</a><span class="old">29,99</span> <span class="new">22,99</span></div>
           </div>
         </body></html>
         "#;
@@ -496,8 +569,8 @@ mod tests {
         let html = r#"
         <html><body>
           <div class="grid">
-            <div class="card"><span>1,234</span></div>
-            <div class="card"><span>5.678</span></div>
+            <div class="card"><div class="price"><span>1,234</span></div></div>
+            <div class="card"><div class="price"><span>5.678</span></div></div>
           </div>
         </body></html>
         "#;
@@ -565,5 +638,6 @@ mod tests {
         assert_eq!(detection.products[1].price, 24.5);
     }
 }
+
 
 

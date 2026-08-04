@@ -20,6 +20,9 @@ Current state: minimal v1 — opens a real browser and lets the user control it.
   `~/.rustup/toolchains/stable-x86_64-apple-darwin/bin`.)
 - No chromedriver needs installing: `WebDriver::managed` auto-downloads the
   matching chromedriver on first run and shuts it down on exit.
+- Sessions persist across runs: Chrome launches with a dedicated profile in
+  `profiles/chrome/`, so logins/cookies survive between executions. Log in once;
+  later `cargo run`s reuse the session.
 
 ## Run
 - `cargo run` opens Chrome and keeps it open until the window is closed or Ctrl+C.

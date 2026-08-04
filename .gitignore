@@ -3,3 +3,5 @@ captures
 # Added by cargo
 
 /target
+
+profiles

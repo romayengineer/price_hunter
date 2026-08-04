@@ -1,6 +1,8 @@
 use std::env;
+use std::path::PathBuf;
 use std::time::Duration;
 
+use thirtyfour::common::capabilities::chromium::ChromiumLikeCapabilities;
 use thirtyfour::prelude::*;
 
 use price_hunter::capture;
@@ -11,7 +13,7 @@ use price_hunter::detect::{Detection, Product};
 async fn main() -> WebDriverResult<()> {
     let args: Vec<String> = env::args().collect();
     let url = parse_args(&args);
-    let driver = WebDriver::managed(DesiredCapabilities::chrome()).await?;
+    let driver = launch_driver().await?;
     navigate_to_arg(&driver, url).await;
 
     println!("Browser is open and under your control. Close the window (or Ctrl+C) to exit.");
@@ -30,6 +32,19 @@ async fn main() -> WebDriverResult<()> {
 
 fn parse_args(args: &[String]) -> Option<String> {
     args.iter().skip(1).find(|a| !a.starts_with('-')).cloned()
+}
+
+async fn launch_driver() -> WebDriverResult<WebDriver> {
+    let profile_dir = profile_dir();
+    std::fs::create_dir_all(&profile_dir)?;
+    let mut caps = DesiredCapabilities::chrome();
+    caps.add_arg(&format!("--user-data-dir={}", profile_dir.display()))?;
+    WebDriver::managed(caps).await
+}
+
+fn profile_dir() -> PathBuf {
+    let cwd = std::env::current_dir().expect("could not determine working directory");
+    cwd.join("profiles").join("chrome")
 }
 
 struct LoopState {

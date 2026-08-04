@@ -23,6 +23,12 @@ fn products() -> Vec<Product> {
         price_text: String::new(),
         price: 3744.05
     },
+    Product {
+        name: String::from("Repelente de insectos Livopen sports en aerosol 132 g"),
+        price_text: String::new(),
+        price: 4489.27
+    },
+    
 ]
 }
 

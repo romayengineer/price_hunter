@@ -35,6 +35,19 @@ fn products() -> Vec<Product> {
 }
 
 #[test]
-fn extracts_all_prices_from_compreahora_fixture() {
-    common::assert_fixture("tests/fixtures/compreahora.html", &products(), "styles-list-view-GbL");
+fn extracts_all_prices_from_compreahora_mobile_fixture() {
+    common::assert_fixture(
+        "tests/fixtures/compreahora_mobile.html",
+        &products(),
+        "styles-list-view-GbL",
+    );
+}
+
+#[test]
+fn extracts_all_prices_from_compreahora_desktop_fixture() {
+    common::assert_fixture(
+        "tests/fixtures/compreahora_desktop.html",
+        &products(),
+        "styles-list-view-GbL",
+    );
 }

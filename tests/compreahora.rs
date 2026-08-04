@@ -1,4 +1,6 @@
-use price_hunter::detect::{detect_grid, Detection, Product};
+mod common;
+
+use price_hunter::detect::Product;
 
 // prices are under class mobile-product-price-price-number
 fn products() -> Vec<Product> {
@@ -34,30 +36,5 @@ fn products() -> Vec<Product> {
 
 #[test]
 fn extracts_all_prices_from_compreahora_fixture() {
-    let html = std::fs::read_to_string("tests/fixtures/compreahora.html").expect("fixture missing");
-    let detection = detect_grid(&html).expect("grid should be detected");
-    list_products_are_found(&detection);
-    assert_is_products_list(&detection);
-}
-
-fn list_products_are_found(detection: &Detection) {
-    for expected in products() {
-        let found = detection
-            .products
-            .iter()
-            .any(|d| d.name == expected.name && d.price == expected.price);
-        assert!(found, "expected product not found: {:?}", expected);
-    }
-}
-
-fn assert_is_products_list(detection: &Detection) {
-    assert!(
-        detection
-            .container
-            .classes
-            .iter()
-            .any(|c| c == "styles-list-view-GbL"),
-        "expected the products list as container, got {:?}",
-        detection.container.classes
-    );
+    common::assert_fixture("tests/fixtures/compreahora.html", &products(), "styles-list-view-GbL");
 }

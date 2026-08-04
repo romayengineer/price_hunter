@@ -45,6 +45,20 @@ pub fn detect_grid(source: &str) -> Option<Detection> {
 
 fn find_price_divs(html: &Html) -> Vec<(NodeId, Vec<Price>)> {
     let own = own_texts(html);
+    let leaf = if has_product_price_spans(html) {
+        let candidates = price_divs_from_product_price_spans(html);
+        if candidates.len() >= 2 {
+            candidates
+        } else {
+            price_divs_from_own_text(html, &own)
+        }
+    } else {
+        price_divs_from_own_text(html, &own)
+    };
+    merge_price_groups(html, &own, leaf)
+}
+
+fn price_divs_from_own_text(html: &Html, own: &HashMap<NodeId, String>) -> Vec<(NodeId, Vec<Price>)> {
     let mut out = Vec::new();
     for node in html.tree.nodes() {
         let Node::Element(el) = node.value() else {
@@ -60,7 +74,65 @@ fn find_price_divs(html: &Html) -> Vec<(NodeId, Vec<Price>)> {
             out.push((node.id(), prices));
         }
     }
-    merge_price_groups(html, &own, out)
+    out
+}
+
+fn has_product_price_spans(html: &Html) -> bool {
+    html.tree.nodes().any(|node| {
+        let Node::Element(el) = node.value() else {
+            return false;
+        };
+        el.name() == "span" && el.classes().any(|c| c.contains("product-price"))
+    })
+}
+
+fn price_divs_from_product_price_spans(html: &Html) -> Vec<(NodeId, Vec<Price>)> {
+    let mut div_text: HashMap<NodeId, String> = HashMap::new();
+    for node in html.tree.nodes() {
+        let Node::Element(el) = node.value() else {
+            continue;
+        };
+        if el.name() != "span" || !el.classes().any(|c| c.contains("product-price")) {
+            continue;
+        }
+        let own: String = node
+            .children()
+            .filter_map(|c| match c.value() {
+                Node::Text(t) => Some(&*t.text),
+                _ => None,
+            })
+            .collect();
+        if own.is_empty() {
+            continue;
+        }
+        let Some(div_id) = nearest_div_ancestor(&node) else {
+            continue;
+        };
+        div_text.entry(div_id).or_default().push_str(&own);
+    }
+    let mut out = Vec::new();
+    for node in html.tree.nodes() {
+        let Node::Element(el) = node.value() else {
+            continue;
+        };
+        if !is_div(el) {
+            continue;
+        }
+        let Some(text) = div_text.get(&node.id()) else {
+            continue;
+        };
+        if let Some(prices) = classify_div(text) {
+            out.push((node.id(), prices));
+        }
+    }
+    out
+}
+
+fn nearest_div_ancestor(node: &NodeRef<'_, Node>) -> Option<NodeId> {
+    node.ancestors().find_map(|a| match a.value() {
+        Node::Element(el) if is_div(el) => Some(a.id()),
+        _ => None,
+    })
 }
 
 fn merge_price_groups(

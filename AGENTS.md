@@ -33,6 +33,16 @@ Current state: minimal v1 — opens a real browser and lets the user control it.
   by site hostname), and a new timestamped file is written again whenever the
   detected products (prices or names) change on a later poll.
 
+## Tests
+- `cargo test` runs the fixture-based detection tests (no network/browser needed).
+- Live integration tests are `#[ignore]`d and require network plus a real session:
+  - `cargo test --test compreahora_live -- --ignored` opens Chrome using the
+    persistent `profiles/chrome` session, visits the perfumeria category, and
+    asserts names + prices are extracted. Set `PRICE_HUNTER_DUMP_HTML=1` to save
+    the rendered page to `captures/diagnostic/` for debugging.
+  - `cargo test --test fabilu -- --ignored` fetches fabilu over plain HTTP.
+- Close any `cargo run` browser first — Chrome locks `profiles/chrome` while running.
+
 ## Gotchas
 - `captures/` is gitignored — write capture output there; do not expect it committed.
 - Do not `driver.quit()`/drop early while the user is driving the browser; keep

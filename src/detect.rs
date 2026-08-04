@@ -87,7 +87,7 @@ fn merge_price_groups(
         if price_children.len() < 2 {
             continue;
         }
-        if !own.get(&id).map(|t| t.trim().is_empty()).unwrap_or(false) {
+        if !own.get(&id).map(|t| t.trim().is_empty()).unwrap_or(true) {
             continue;
         }
         if price_children

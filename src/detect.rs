@@ -55,7 +55,30 @@ fn find_price_divs(html: &Html) -> Vec<(NodeId, Vec<Price>)> {
     } else {
         price_divs_from_own_text(html, &own)
     };
-    merge_price_groups(html, &own, leaf)
+    let merged = merge_price_groups(html, &own, leaf);
+    drop_ancestor_price_divs(html, merged)
+}
+
+fn drop_ancestor_price_divs(
+    html: &Html,
+    price_divs: Vec<(NodeId, Vec<Price>)>,
+) -> Vec<(NodeId, Vec<Price>)> {
+    let ids: Vec<NodeId> = price_divs.iter().map(|(id, _)| *id).collect();
+    price_divs
+        .into_iter()
+        .filter(|(id, _)| {
+            !ids.iter().any(|other| {
+                *other != *id && is_ancestor_of(html, *id, *other)
+            })
+        })
+        .collect()
+}
+
+fn is_ancestor_of(html: &Html, ancestor: NodeId, descendant: NodeId) -> bool {
+    let Some(node) = html.tree.get(descendant) else {
+        return false;
+    };
+    node.ancestors().any(|a| a.id() == ancestor)
 }
 
 fn price_divs_from_own_text(html: &Html, own: &HashMap<NodeId, String>) -> Vec<(NodeId, Vec<Price>)> {
@@ -383,7 +406,7 @@ fn best_container(html: &Html, price_divs: &[(NodeId, Vec<Price>)]) -> Option<(N
                 None => true,
                 Some((_, bp, bd)) => {
                     let base = *bp as f64 / *bd as f64;
-                    density > base || (density == base && (p > *bp || (p == *bp && d < *bd)))
+                    p > *bp || (p == *bp && density > base)
                 }
             };
             if better {
@@ -413,18 +436,48 @@ fn extract_products(
     container_id: NodeId,
     price_divs: &[(NodeId, Vec<Price>)],
 ) -> Vec<Product> {
-    price_divs
-        .iter()
-        .filter(|(id, _)| is_descendant_of(html, *id, container_id))
-        .map(|(id, prices)| {
+    let mut cards: Vec<(NodeId, NodeId, Vec<Price>)> = Vec::new();
+    for (id, prices) in price_divs {
+        if !is_descendant_of(html, *id, container_id) {
+            continue;
+        }
+        let key = card_of(html, *id, container_id);
+        match cards.iter_mut().find(|(k, _, _)| *k == key) {
+            Some((_, best_id, best_prices)) => {
+                if prices.len() > best_prices.len() {
+                    *best_id = *id;
+                    *best_prices = prices.clone();
+                }
+            }
+            None => cards.push((key, *id, prices.clone())),
+        }
+    }
+    cards
+        .into_iter()
+        .map(|(_, price_div_id, prices)| {
             let price = prices.last().expect("price div has a price");
             Product {
-                name: guess_name(html, *id, container_id),
+                name: guess_name(html, price_div_id, container_id),
                 price_text: price.text.clone(),
                 price: price.value,
             }
         })
         .collect()
+}
+
+fn card_of(html: &Html, id: NodeId, container_id: NodeId) -> NodeId {
+    let Some(mut node) = html.tree.get(id) else {
+        return id;
+    };
+    loop {
+        let Some(parent) = node.parent() else {
+            return node.id();
+        };
+        if parent.id() == container_id {
+            return node.id();
+        }
+        node = parent;
+    }
 }
 
 fn is_descendant_of(html: &Html, id: NodeId, container_id: NodeId) -> bool {

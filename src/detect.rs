@@ -380,6 +380,15 @@ fn digits_after(s: &str, from: usize) -> usize {
 }
 
 fn best_container(html: &Html, price_divs: &[(NodeId, Vec<Price>)]) -> Option<(NodeId, usize)> {
+    ranked_containers(html, price_divs)
+        .first()
+        .map(|(id, p, _)| (*id, *p))
+}
+
+fn ranked_containers(
+    html: &Html,
+    price_divs: &[(NodeId, Vec<Price>)],
+) -> Vec<(NodeId, usize, usize)> {
     let price_set: HashSet<NodeId> = price_divs.iter().map(|(id, _)| *id).collect();
     let mut divs: HashMap<NodeId, usize> = HashMap::new();
     let mut prices: HashMap<NodeId, usize> = HashMap::new();
@@ -421,7 +430,48 @@ fn best_container(html: &Html, price_divs: &[(NodeId, Vec<Price>)]) -> Option<(N
         let db = b.1 as f64 / b.2 as f64;
         db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
     });
-    candidates.first().map(|(id, p, _)| (*id, *p))
+    candidates
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ContainerCandidate {
+    pub classes: Vec<String>,
+    pub id: Option<String>,
+    pub price_count: usize,
+    pub div_count: usize,
+    pub density: f64,
+    pub selected: bool,
+}
+
+/// Ranks every candidate product container in the page, newest first. The
+/// `selected` flag marks the one `detect_grid` would pick. Useful for
+/// diagnosing why a grid on a whole page (with widgets, carousels, etc.)
+/// resolves to the wrong container.
+pub fn diagnose_containers(source: &str) -> Vec<ContainerCandidate> {
+    let html = Html::parse_document(source);
+    let price_divs = find_price_divs(&html);
+    let picked = best_container(&html, &price_divs).map(|(id, _)| id);
+    ranked_containers(&html, &price_divs)
+        .into_iter()
+        .map(|(id, p, d)| ContainerCandidate {
+            classes: html
+                .tree
+                .get(id)
+                .and_then(|n| match n.value() {
+                    Node::Element(el) => Some(el.classes().map(|c| c.to_string()).collect()),
+                    _ => None,
+                })
+                .unwrap_or_default(),
+            id: html.tree.get(id).and_then(|n| match n.value() {
+                Node::Element(el) => el.attr("id").map(|s| s.to_string()),
+                _ => None,
+            }),
+            price_count: p,
+            div_count: d,
+            density: p as f64 / d as f64,
+            selected: picked == Some(id),
+        })
+        .collect()
 }
 
 fn build_container(html: &Html, id: NodeId, child_count: usize) -> Container {

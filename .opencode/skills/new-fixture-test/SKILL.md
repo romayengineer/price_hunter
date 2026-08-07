@@ -49,17 +49,9 @@ fn extracts_all_products_from_<name>_fixture() {
 1. **Read the fixture** and map: the grid container element (note its `class`), the repeating card element, the name element, and the price element(s). Distinguish the CURRENT selling price from regular/old/discount (e.g. `itemprop="price"`, `.price`, `.sellingPrice` vs `.regular-price`, `.discount-*`, `del`/`s`).
 2. **Count cards**: `rg -c` a marker appearing once per card (e.g. `<article class="product-miniature`). That's the number of products expected.
 3. **Extract expected products** with a one-off script (template below) reading name + current price. Convert prices per the parse rules.
-4. **Probe the pipeline** — dump actual detection output and compare with the fixture:
-   - add a temporary `tests/probe.rs` (remove before finishing):
-
-```rust
-#[test]
-fn probe() {
-    let html = std::fs::read_to_string("tests/fixtures/<name>.html").unwrap();
-    println!("{:#?}", price_hunter::detect::detect_grid(&html));
-}
-```
-   - run `cargo test --test probe -- --nocapture`.
+4. **Probe the pipeline** — dump actual detection output and compare with the fixture. There's a permanent parameterized probe in `tests/probe.rs` (no need to create/delete a temp file):
+   - run `PRICE_HUNTER_PROBE_FIXTURE=tests/fixtures/<name>.html cargo test --test probe -- --nocapture`.
+   - It prints the full `Detection` (container + products) for whatever fixture the env var points to. Without the env var it's a no-op, so it never pollutes normal test runs.
 5. **Fix `detect.rs` only if needed** (see failure modes). Preserve existing behavior with fallbacks; run the whole suite.
 6. **Add a `detect.rs` unit test** reproducing the quirk with inline HTML (in `#[cfg(test)] mod tests`).
 7. **Write `tests/<name>.rs`**, then verify: `cargo test` and `cargo clippy --all-targets`.
@@ -108,6 +100,7 @@ for b in re.split(r'<li class="flex flex-col">', src)[1:]:   # split on one-per-
 
 - Expected `price_text` is always `String::new()`.
 - Pass ONE container class that's present on the container element.
+- `tests/probe.rs` is a permanent fixture-dumper: use it via `PRICE_HUNTER_PROBE_FIXTURE=... cargo test --test probe -- --nocapture`; keep it, don't delete it.
 - PrestaShop: current price = `span[itemprop="price"]`; `.regular-price` and `.discount-*` must be ignored.
 - Magento/Hyva: current price = `[data-price-type="finalPrice"]`; ignore `oldPrice`/`basePrice` and `.product-installments` amounts.
 - Card count from `rg -c` must match the extracted product count.

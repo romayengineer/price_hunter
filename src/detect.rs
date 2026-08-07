@@ -455,7 +455,9 @@ fn extract_products(
     cards
         .into_iter()
         .map(|(_, price_div_id, prices)| {
-            let price = prices.last().expect("price div has a price");
+            let price = current_price_of(html, price_div_id)
+                .or_else(|| prices.last().cloned())
+                .expect("price div has a price");
             Product {
                 name: guess_name(html, price_div_id, container_id),
                 price_text: price.text.clone(),
@@ -463,6 +465,29 @@ fn extract_products(
             }
         })
         .collect()
+}
+
+fn current_price_of(html: &Html, id: NodeId) -> Option<Price> {
+    let node = html.tree.get(id)?;
+    for n in node.descendants() {
+        let Node::Element(el) = n.value() else {
+            continue;
+        };
+        if el.attr("itemprop") != Some("price") {
+            continue;
+        }
+        let text: String = n
+            .descendants()
+            .filter_map(|x| match x.value() {
+                Node::Text(t) => Some(&*t.text),
+                _ => None,
+            })
+            .collect();
+        if let Some(prices) = classify_div(&text) {
+            return prices.last().cloned();
+        }
+    }
+    None
 }
 
 fn card_of(html: &Html, id: NodeId, container_id: NodeId) -> NodeId {
@@ -674,22 +699,6 @@ mod tests {
     }
 
     #[test]
-    fn two_prices_card_picks_current_price() {
-        let html = r#"
-        <html><body>
-          <div class="grid">
-            <div class="card"><a>Alpha</a><span class="old">19,99</span> <span class="new">12,99</span></div>
-            <div class="card"><a>Beta</a><span class="old">29,99</span> <span class="new">22,99</span></div>
-          </div>
-        </body></html>
-        "#;
-        let detection = detect_grid(html).expect("grid should be detected");
-        assert_eq!(detection.products.len(), 2);
-        assert_eq!(detection.products[0].price, 12.99);
-        assert_eq!(detection.products[1].price, 22.99);
-    }
-
-    #[test]
     fn thousands_only_price() {
         let html = r#"
         <html><body>
@@ -747,7 +756,46 @@ mod tests {
     }
 
     #[test]
-    fn woocommerce_decimal_comma() {
+    fn prestashop_prefers_itemprop_price() {
+        let html = r#"
+        <html><body>
+          <div class="products row">
+            <article class="product-miniature">
+              <div class="product-description">
+                <h2 class="product-title"><a href="/a">Light Blue Homme EDP 50</a></h2>
+                <div class="product-price-and-shipping">
+                  <span itemprop="price" class="price cod"><span>$242.100</span></span>
+                  <span class="regular-price">$269.000</span>
+                  <span class="discount-percentage discount-product">-10%</span>
+                </div>
+              </div>
+            </article>
+            <article class="product-miniature">
+              <div class="product-description">
+                <h2 class="product-title"><a href="/b">Bottled Beyond EDT 50</a></h2>
+                <div class="product-price-and-shipping">
+                  <span itemprop="price" class="price cod"><span>$219.000</span></span>
+                  <span class="regular-price">$249.000</span>
+                  <span class="discount-amount discount-product">-$30.000</span>
+                </div>
+              </div>
+            </article>
+          </div>
+        </body></html>
+        "#;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(detection.container.classes, vec!["products", "row"]);
+        assert_eq!(detection.products.len(), 2);
+        assert_eq!(detection.products[0].name, "Light Blue Homme EDP 50");
+        assert_eq!(detection.products[0].price, 242100.0);
+        assert_eq!(detection.products[0].price_text, "242.100");
+        assert_eq!(detection.products[1].name, "Bottled Beyond EDT 50");
+        assert_eq!(detection.products[1].price, 219000.0);
+        assert_eq!(detection.products[1].price_text, "219.000");
+    }
+
+    #[test]
+    fn two_prices_card_picks_current_price() {
         let html = r#"
         <html><body>
           <div class="product-grid">

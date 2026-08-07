@@ -41,6 +41,9 @@ Current state: minimal v1 — opens a real browser and lets the user control it.
     asserts names + prices are extracted. Set `PRICE_HUNTER_DUMP_HTML=1` to save
     the rendered page to `captures/diagnostic/` for debugging.
   - `cargo test --test fabilu -- --ignored` fetches fabilu over plain HTTP.
+  - `cargo test --test parfumerie_live -- --ignored` opens Chrome, visits the
+    `/fragancias` category, scrolls to trigger infinite scroll, and asserts at
+    least 10 products with names + prices.
 - Close any `cargo run` browser first — Chrome locks `profiles/chrome` while running.
 
 ## Gotchas

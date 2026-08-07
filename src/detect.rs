@@ -383,7 +383,6 @@ fn best_container(html: &Html, price_divs: &[(NodeId, Vec<Price>)]) -> Option<(N
     let price_set: HashSet<NodeId> = price_divs.iter().map(|(id, _)| *id).collect();
     let mut divs: HashMap<NodeId, usize> = HashMap::new();
     let mut prices: HashMap<NodeId, usize> = HashMap::new();
-    let mut best: Option<(NodeId, usize, usize)> = None;
     let nodes: Vec<_> = html.tree.nodes().collect();
     for node in nodes.iter().rev() {
         let Node::Element(el) = node.value() else {
@@ -400,21 +399,29 @@ fn best_container(html: &Html, price_divs: &[(NodeId, Vec<Price>)]) -> Option<(N
         }
         divs.insert(id, d);
         prices.insert(id, p);
-        if is_div(el) && p >= 2 {
-            let density = p as f64 / d as f64;
-            let better = match &best {
-                None => true,
-                Some((_, bp, bd)) => {
-                    let base = *bp as f64 / *bd as f64;
-                    p > *bp || (p == *bp && density > base)
-                }
-            };
-            if better {
-                best = Some((id, p, d));
-            }
-        }
     }
-    best.map(|(id, p, _)| (id, p))
+    let mut candidates: Vec<(NodeId, usize, usize)> = nodes
+        .iter()
+        .filter_map(|node| {
+            let Node::Element(el) = node.value() else {
+                return None;
+            };
+            if !is_div(el) {
+                return None;
+            }
+            let p = *prices.get(&node.id())?;
+            let d = *divs.get(&node.id())?;
+            (p >= 2).then_some((node.id(), p, d))
+        })
+        .collect();
+    let max_p = candidates.iter().map(|(_, p, _)| *p).max().unwrap_or(0);
+    candidates.retain(|(_, p, _)| *p >= max_p / 2);
+    candidates.sort_by(|a, b| {
+        let da = a.1 as f64 / a.2 as f64;
+        let db = b.1 as f64 / b.2 as f64;
+        db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    candidates.first().map(|(id, p, _)| (*id, *p))
 }
 
 fn build_container(html: &Html, id: NodeId, child_count: usize) -> Container {

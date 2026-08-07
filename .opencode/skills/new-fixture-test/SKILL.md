@@ -38,7 +38,11 @@ fn extracts_all_products_from_<name>_fixture() {
 `detect_grid(source)`:
 1. `find_price_divs` — divs whose own text classifies as prices (`classify_div`); plus a separate path for spans whose class contains `product-price`.
 2. `best_container` — div with ≥2 price divs, maximizing price count then density.
-3. `extract_products` — one product per card; price = `current_price_of(...).or_else(|| prices.last())`; name = `guess_name` (walks up from the price div: `a[title/aria-label]`, `a` text, `img alt`, else largest alphabetic text block).
+3. `extract_products` — one product per card; price = `current_price_of(...).or_else(|| prices.last())`; name = `guess_name` (walks up from the price div: `a[data-role="product-item-name"]`, `a[title/aria-label]`, `a` text, `img alt`, else largest alphabetic text block).
+
+`current_price_of` recognizes current-price elements by `itemprop="price"` or `data-price-type="finalPrice"` (Magento), falling back to `prices.last()`.
+
+`card_of` groups each price div under the node whose parent is the container; if that node is a list/table wrapper (`ul`/`ol`/`tbody`/`table` or `role="list"`) it returns the element one level deeper (e.g. the `li` card), so cards inside a `<ul>` still split correctly.
 
 ## Workflow
 
@@ -62,12 +66,12 @@ fn probe() {
 
 ## Failure modes → where to fix detect.rs
 
-- Wrong price among several on a card → prefer the current-price element. Follow the `current_price_of` pattern: scan the price div's descendants for the new signal (e.g. `itemprop="price"`, or a class containing `price` but not `regular|old|sale|was|discount|compare`), parse it, return it; the caller falls back to `prices.last()` so other sites keep working.
-- Fewer products than card count → card grouping (`card_of`) or container (`best_container`) too narrow.
-- Name wrong/empty → extend `find_structured_name` / `guess_name` for the new markup.
+- Wrong price among several on a card → prefer the current-price element. Follow the `current_price_of` pattern: scan the price div's descendants for the new signal (e.g. `itemprop="price"`, `data-price-type="finalPrice"`, or a class containing `price` but not `regular|old|sale|was|discount|compare|base`), parse it, return it; the caller falls back to `prices.last()` so other sites keep working.
+- Fewer products than card count (often 1 collapsed product) → `card_of` hit a shared wrapper (`ul`/`ol`/`tbody`/`table` or `role="list"`) instead of the per-product card; extend `is_card_list_wrapper` or `card_of`.
+- Name wrong/empty (e.g. a brand or breadcrumb `<a>` beats the product name) → extend `find_structured_name` / `guess_name` for the new markup (e.g. `a[data-role="product-item-name"]`).
 - Wrong container class → `best_container` picked another div (density vs count tradeoff).
 - Wrong number value → `parse_price` / `number_tokens` / `split_decimal` (thousands vs decimal).
-- Discounts / list-prices leaking in → ensure discount/old elements are never chosen.
+- Discounts / list-prices leaking in → ensure discount/old/base elements are never chosen.
 
 ## Price parsing rules (parse_price)
 
@@ -78,6 +82,8 @@ fn probe() {
 
 ## Extraction script template (adapt selectors to the fixture)
 
+PrestaShop (`itemprop="price"`):
+
 ```python
 import re, html as h
 src = open('tests/fixtures/<name>.html').read()
@@ -87,10 +93,22 @@ for b in re.split(r'<article ', src)[1:]:   # split on one-per-card marker
     print(f'{re.sub("\\s+", " ", h.unescape(name.group(1))).strip()} | {price.group(1)}')
 ```
 
+Magento / Hyva (`data-price-type="finalPrice"`):
+
+```python
+import re, html as h
+src = open('tests/fixtures/<name>.html').read()
+for b in re.split(r'<li class="flex flex-col">', src)[1:]:   # split on one-per-card marker
+    name = re.search(r'data-role="product-item-name"[^>]*>\s*([\s\S]*?)</a>', b)
+    price = re.search(r'data-price-type="finalPrice"[\s\S]*?<span\s+class="price">\$[^\d]*([\d.,]+)</span>', b)
+    print(f'{re.sub("\\s+", " ", h.unescape(name.group(1))).strip()} | {price.group(1)}')
+```
+
 ## Gotchas
 
 - Expected `price_text` is always `String::new()`.
 - Pass ONE container class that's present on the container element.
 - PrestaShop: current price = `span[itemprop="price"]`; `.regular-price` and `.discount-*` must be ignored.
+- Magento/Hyva: current price = `[data-price-type="finalPrice"]`; ignore `oldPrice`/`basePrice` and `.product-installments` amounts.
 - Card count from `rg -c` must match the extracted product count.
 - Don't run `--ignored`/live tests. Don't commit unless asked.

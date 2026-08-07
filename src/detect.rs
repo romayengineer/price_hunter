@@ -473,7 +473,9 @@ fn current_price_of(html: &Html, id: NodeId) -> Option<Price> {
         let Node::Element(el) = n.value() else {
             continue;
         };
-        if el.attr("itemprop") != Some("price") {
+        let is_current_price = el.attr("itemprop") == Some("price")
+            || el.attr("data-price-type") == Some("finalPrice");
+        if !is_current_price {
             continue;
         }
         let text: String = n
@@ -494,14 +496,28 @@ fn card_of(html: &Html, id: NodeId, container_id: NodeId) -> NodeId {
     let Some(mut node) = html.tree.get(id) else {
         return id;
     };
+    let mut child = id;
     loop {
         let Some(parent) = node.parent() else {
-            return node.id();
+            return child;
         };
         if parent.id() == container_id {
+            if is_card_list_wrapper(&node) {
+                return child;
+            }
             return node.id();
         }
+        child = node.id();
         node = parent;
+    }
+}
+
+fn is_card_list_wrapper(node: &NodeRef<'_, Node>) -> bool {
+    match node.value() {
+        Node::Element(el) => {
+            matches!(el.name(), "ul" | "ol" | "tbody" | "table") || el.attr("role") == Some("list")
+        }
+        _ => false,
     }
 }
 
@@ -541,6 +557,38 @@ fn collapse_whitespace(text: &str) -> String {
 }
 
 fn find_structured_name(node: &NodeRef<'_, Node>) -> Option<String> {
+    for n in node.descendants() {
+        let Node::Element(el) = n.value() else {
+            continue;
+        };
+        if el.name() != "a" {
+            continue;
+        }
+        let is_product_name = el.attr("data-role") == Some("product-item-name")
+            || el.classes().any(|c| c.contains("product-item-name"));
+        if !is_product_name {
+            continue;
+        }
+        for attr in ["title", "aria-label"] {
+            if let Some(t) = el.attr(attr) {
+                let t = t.trim();
+                if !t.is_empty() {
+                    return Some(t.to_string());
+                }
+            }
+        }
+        let text: String = n
+            .descendants()
+            .filter_map(|x| match x.value() {
+                Node::Text(t) => Some(&*t.text),
+                _ => None,
+            })
+            .collect();
+        let text = collapse_whitespace(&text);
+        if !text.is_empty() && !contains_confident_price(&text) {
+            return Some(text);
+        }
+    }
     for n in node.descendants() {
         match n.value() {
             Node::Element(el) if el.name() == "a" => {
@@ -792,6 +840,49 @@ mod tests {
         assert_eq!(detection.products[1].name, "Bottled Beyond EDT 50");
         assert_eq!(detection.products[1].price, 219000.0);
         assert_eq!(detection.products[1].price_text, "219.000");
+    }
+
+    #[test]
+    fn magento_ul_list_splits_cards_and_prefers_final_price() {
+        let html = r#"
+        <html><body>
+          <div class="products wrapper mode-grid products-grid">
+            <ul role="list">
+              <li>
+                <form class="product_addtocart_form">
+                  <strong class="product brand"><a class="product-item-link" href="/brands/x">RABANNE</a></strong>
+                  <a class="product-item-link" data-role="product-item-name" href="/a">FAME COUTURE EDP 80ML</a>
+                  <div class="price-box price-final_price">
+                    <span class="price-wrapper price-including-tax" data-price-type="finalPrice"><span class="price">$&nbsp;264.000</span></span>
+                    <span class="price-wrapper price-excluding-tax" data-price-type="basePrice"><span class="price">$&nbsp;218.182</span></span>
+                  </div>
+                  <div class="product-installments"><span class="amount">$&nbsp;22.000</span></div>
+                </form>
+              </li>
+              <li>
+                <form class="product_addtocart_form">
+                  <strong class="product brand"><a class="product-item-link" href="/brands/y">CAROLINA HERRERA</a></strong>
+                  <a class="product-item-link" data-role="product-item-name" href="/b">212 SEXY MEN EDT 100ML</a>
+                  <div class="price-box price-final_price">
+                    <span class="old-price"><span class="price-wrapper price-including-tax" data-price-type="oldPrice"><span class="price">$&nbsp;225.000</span></span></span>
+                    <span class="normal-price"><span class="price-wrapper price-including-tax" data-price-type="finalPrice"><span class="price">$&nbsp;165.000</span></span></span>
+                    <span class="price-wrapper price-excluding-tax" data-price-type="basePrice"><span class="price">$&nbsp;165.000</span></span>
+                  </div>
+                </form>
+              </li>
+            </ul>
+          </div>
+        </body></html>
+        "#;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(detection.container.classes, vec!["mode-grid", "products", "products-grid", "wrapper"]);
+        assert_eq!(detection.products.len(), 2);
+        assert_eq!(detection.products[0].name, "FAME COUTURE EDP 80ML");
+        assert_eq!(detection.products[0].price, 264000.0);
+        assert_eq!(detection.products[0].price_text, "264.000");
+        assert_eq!(detection.products[1].name, "212 SEXY MEN EDT 100ML");
+        assert_eq!(detection.products[1].price, 165000.0);
+        assert_eq!(detection.products[1].price_text, "165.000");
     }
 
     #[test]

@@ -7,3 +7,6 @@ captures
 /target
 
 profiles
+
+# TrailBase runtime depot (databases, secrets, generated config)
+**/traildepot/

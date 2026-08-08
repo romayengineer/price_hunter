@@ -7,6 +7,7 @@ use price_hunter::browser;
 use price_hunter::capture;
 use price_hunter::detect;
 use price_hunter::detect::{Detection, Product};
+use price_hunter::store::{self, Store};
 
 #[tokio::main]
 async fn main() -> WebDriverResult<()> {
@@ -17,16 +18,37 @@ async fn main() -> WebDriverResult<()> {
 
     println!("Browser is open and under your control. Close the window (or Ctrl+C) to exit.");
 
+    let store = connect_store();
     let mut state = LoopState {
         last_source: None,
         detection: None,
         last_capture_products: None,
+        store,
     };
     while !poll_closed(&driver).await {
         refresh(&driver, &mut state).await;
     }
 
     driver.quit().await
+}
+
+fn connect_store() -> Option<Store> {
+    let default = "traildepot/data/main.db";
+    let path = env::var("PRICE_HUNTER_DB").unwrap_or_else(|_| default.to_string());
+    match store::Store::open(&path) {
+        Ok(store) => {
+            println!("Persisting captures to {path} (TrailBase serves this DB)");
+            Some(store)
+        }
+        Err(e) => {
+            eprintln!(
+                "Could not open {path}: {e}\n\
+                 Start TrailBase first (see trailbase/scripts/setup_trailbase.sh) or set \
+                 PRICE_HUNTER_DB. Captures will be written to JSON only."
+            );
+            None
+        }
+    }
 }
 
 fn parse_args(args: &[String]) -> Option<String> {
@@ -37,6 +59,7 @@ struct LoopState {
     last_source: Option<String>,
     detection: Option<Detection>,
     last_capture_products: Option<Vec<Product>>,
+    store: Option<Store>,
 }
 
 async fn navigate_to_arg(driver: &WebDriver, url: Option<String>) {
@@ -97,5 +120,20 @@ async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
         detection.products.len(),
         path.display()
     );
+    persist_to_store(&mut state.store, &url, detection);
     state.last_capture_products = Some(detection.products.clone());
+}
+
+fn persist_to_store(store: &mut Option<Store>, url: &str, detection: &Detection) {
+    let Some(store) = store else {
+        return;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    match store.save(url, now, detection) {
+        Ok(()) => println!("Persisted capture to the store"),
+        Err(e) => eprintln!("Could not persist capture to the store: {e}"),
+    }
 }

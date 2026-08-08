@@ -52,7 +52,36 @@ cargo run -- https://www.beauty24.com.ar/perfumes-y-fragancias
 
 Captures are written to `captures/<domain>/capture-<timestamp>.json`, organized
 by site hostname. A new timestamped file is written whenever the detected
-products (prices or names) change on a later poll.
+products (prices or names) change on a later poll. The same captures are also
+persisted to the SQLite database TrailBase serves (`traildepot/data/main.db`,
+override with `PRICE_HUNTER_DB`).
+
+### TrailBase
+
+Price Hunter persists every capture to a SQLite database exposed through
+[TrailBase](https://trailbase.io) — a self-hosted, single-executable backend
+with an admin dashboard and type-safe Record APIs. TrailBase is not required to
+run the scraper (it always writes JSON); it's the retrieval layer for the app.
+
+Setup:
+
+```sh
+bash trailbase/scripts/setup_trailbase.sh   # installs `trail`, seeds traildepot/
+trail run                                    # serves http://localhost:4000
+```
+
+- Admin dashboard (browse captures/products): `http://localhost:4000/_/admin/`
+  — credentials are printed on the first `trail run`.
+- Captures API: `http://localhost:4000/api/records/v1/captures`
+- Products API: `http://localhost:4000/api/records/v1/products`
+
+The scraper writes directly to `traildepot/data/main.db` (the same file
+TrailBase serves), so no app user is needed — the Record APIs are world-readable
+and any writes go straight to the database file.
+
+The schema lives in `trailbase/migrations/` and the Record API config in
+`trailbase/config.textproto`. The runtime depot (`traildepot/`) is gitignored;
+re-run the setup script on a fresh checkout to recreate it.
 
 ```json
 {
@@ -69,6 +98,9 @@ products (prices or names) change on a later poll.
   ]
 }
 ```
+
+The same data lands in the `captures` and `products` SQLite tables (host,
+captured_at, container metadata, and one row per product with name/price).
 
 ## Tests
 

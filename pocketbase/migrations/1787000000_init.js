@@ -96,7 +96,7 @@ migrate(
       deleteRule: null,
       indexes: [
         "CREATE UNIQUE INDEX idx_provider_products_provider_url ON provider_products (provider_id, provider_product_url)",
-        "CREATE UNIQUE INDEX idx_provider_products_provider_name ON provider_products (provider_id, product_name)",
+        "CREATE UNIQUE INDEX idx_provider_products_provider_name ON provider_products (provider_id, name)",
       ],
       fields: [
         {
@@ -109,7 +109,7 @@ migrate(
         { name: "provider_product_url", type: "text", required: true },
         { name: "sku", type: "text" },
         { name: "gtin_ean", type: "text" },
-        { name: "product_name", type: "text", required: true },
+        { name: "name", type: "text", required: true },
         { name: "provider_brand", type: "text" },
         { name: "provider_size", type: "text" },
         { name: "availability", type: "text" },

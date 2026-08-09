@@ -45,11 +45,18 @@ erDiagram
         varchar product_name "name extracted from HTML"
         varchar provider_brand "brand as scraped"
         varchar provider_size "size as scraped"
-        varchar image_url "product image from card"
         varchar availability "in_stock, out_of_stock, ..."
         int product_id FK, UK "nullable, confirmed link to products.id"
         datetime last_seen_at
         datetime created_at
+    }
+
+    product_images {
+        int id PK
+        int provider_product_id FK "references provider_products.id"
+        varchar url
+        int position "display order"
+        boolean is_primary
     }
 
     product_matches {
@@ -76,6 +83,7 @@ erDiagram
     products o|--o{ provider_products : "matched to"
     provider_products ||--o{ product_matches : "has candidates"
     products o|--o{ product_matches : "suggested as"
+    provider_products ||--o{ product_images : "shows"
     scrapes ||--o{ provider_prices : "observed in"
     provider_products ||--o{ provider_prices : "has prices at"
 ```
@@ -136,13 +144,26 @@ A product as listed on a specific provider's site. `product_name` is extracted f
 | product_name          | varchar  | name extracted from HTML |
 | provider_brand        | varchar  | brand as scraped |
 | provider_size         | varchar  | size as scraped |
-| image_url             | varchar  | product image from the card; aids match review |
 | availability          | varchar  | e.g. `in_stock`, `out_of_stock` |
 | product_id            | int      | nullable; confirmed foreign key → `products.id` |
 | last_seen_at          | datetime | last poll that observed this listing |
 | created_at            | datetime | |
 
 Unique: `(provider_id, provider_product_url)`. For matched rows, `product_id` is unique per provider product.
+
+### product_images
+
+Images scraped from a provider product's card. Stored as rows (not an array) so each image can carry display order and primary status.
+
+| Column              | Type     | Notes |
+| ------------------- | -------- | ----- |
+| id                  | int      | primary key |
+| provider_product_id | int      | foreign key → `provider_products.id` |
+| url                 | varchar  | image URL |
+| position            | int      | display order; unique per provider product |
+| is_primary          | boolean  | the thumbnail/main image |
+
+Unique: `(provider_product_id, position)`; at most one `is_primary = true` row per provider product.
 
 ### product_matches
 
@@ -182,6 +203,6 @@ Unique: `(provider_product_id, created_at)` guards against duplicate snapshots w
 The app persists through the PocketBase Record API only (no SQL, no direct DB file access).
 
 - All `FK` markers above are logical references; PocketBase does not enforce foreign keys. Enforced in application code.
-- Unique constraints **are** supported: PocketBase backs collections with SQLite and lets migrations define unique indexes via `$collection->indexes.add(...)`. The `(provider_id, provider_product_url)`, `(provider_product_id, created_at)`, and `(provider_product_id, product_id)` uniques should be declared there, not only in app code.
+- Unique constraints **are** supported: PocketBase backs collections with SQLite and lets migrations define unique indexes via `$collection->indexes.add(...)`. The `(provider_id, provider_product_url)`, `(provider_product_id, created_at)`, `(provider_product_id, product_id)`, and `(provider_product_id, position)` uniques should be declared there, not only in app code.
 - `boolean`/`decimal`/`datetime` in this diagram map to PocketBase's `bool`/`number`/`date` collection field types.
 - If a future migration moves this model to a relational SQL database (Diesel/SQLx), FK constraints become enforceable schema-level `FOREIGN KEY` clauses.

@@ -43,7 +43,7 @@ erDiagram
         varchar provider_product_url UK "stable per-provider key"
         varchar sku "provider's own product id"
         varchar gtin_ean "optional barcode"
-        varchar product_name "name extracted from HTML"
+        varchar product_name UK "unique per provider"
         varchar provider_brand "brand as scraped"
         varchar provider_size "size as scraped"
         varchar availability "in_stock, out_of_stock, ..."
@@ -148,7 +148,7 @@ A product as listed on a specific provider's site. `product_name` is extracted f
 | provider_product_url  | varchar  | unique per provider; stable key for idempotent upserts |
 | sku                   | varchar  | provider's own product id, when present |
 | gtin_ean              | varchar  | optional barcode, when present |
-| product_name          | varchar  | name extracted from HTML |
+| product_name          | varchar  | name extracted from HTML; unique per provider |
 | provider_brand        | varchar  | brand as scraped |
 | provider_size         | varchar  | size as scraped |
 | availability          | varchar  | e.g. `in_stock`, `out_of_stock` |
@@ -156,7 +156,7 @@ A product as listed on a specific provider's site. `product_name` is extracted f
 | last_seen_at          | datetime | last poll that observed this listing |
 | created_at            | datetime | |
 
-Unique: `(provider_id, provider_product_url)`. For matched rows, `product_id` is unique per provider product.
+Unique: `(provider_id, provider_product_url)` and `(provider_id, product_name)`. The store looks a provider product up by name first (reusing the row when a name appears at a new URL), then by URL. For matched rows, `product_id` is unique per provider product.
 
 ### provider_product_images
 
@@ -213,6 +213,6 @@ Unique: `(provider_product_id, created_at)` guards against duplicate snapshots w
 The app persists through the PocketBase Record API only (no SQL, no direct DB file access).
 
 - All `FK` markers above are logical references; PocketBase does not enforce foreign keys. Enforced in application code.
-- Unique constraints **are** supported: PocketBase backs collections with SQLite and lets migrations define unique indexes via `$collection->indexes.add(...)`. The `(provider_id, provider_product_url)`, `(provider_product_id, created_at)`, `(provider_product_id, product_id)`, `(provider_product_id, url)`, and `(brand, name, size)` uniques should be declared there, not only in app code.
+- Unique constraints **are** supported: PocketBase backs collections with SQLite and lets migrations define unique indexes via `$collection->indexes.add(...)`. The `(provider_id, provider_product_url)`, `(provider_id, product_name)`, `(provider_product_id, created_at)`, `(provider_product_id, product_id)`, `(provider_product_id, url)`, and `(brand, name, size)` uniques should be declared there, not only in app code.
 - `boolean`/`decimal`/`datetime` in this diagram map to PocketBase's `bool`/`number`/`date` collection field types.
 - If a future migration moves this model to a relational SQL database (Diesel/SQLx), FK constraints become enforceable schema-level `FOREIGN KEY` clauses.

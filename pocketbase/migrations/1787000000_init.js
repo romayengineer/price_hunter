@@ -96,6 +96,7 @@ migrate(
       deleteRule: null,
       indexes: [
         "CREATE UNIQUE INDEX idx_provider_products_provider_url ON provider_products (provider_id, provider_product_url)",
+        "CREATE UNIQUE INDEX idx_provider_products_provider_name ON provider_products (provider_id, product_name)",
       ],
       fields: [
         {

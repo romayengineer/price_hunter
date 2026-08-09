@@ -224,28 +224,26 @@ impl Store {
             .map(|r| ScrapeRow { id: r.id })
     }
 
-    /// Returns the provider product for `(provider_id, provider_product_url)`,
-    /// creating it (with `product_name` and `last_seen_at` set) when it does
-    /// not exist yet.
+    /// Returns the provider product for `(provider_id, product_name)`, falling
+    /// back to the `(provider_id, provider_product_url)` match, creating it
+    /// (with `product_name` and `last_seen_at` set) when neither exists.
+    ///
+    /// `product_name` is unique per provider, so a name that shows up under a
+    /// new URL reuses the existing row instead of creating a duplicate.
     fn ensure_provider_product(
         &self,
         provider: &ProviderRow,
         provider_product_url: &str,
         product_name: &str,
     ) -> Result<ProviderProductRow> {
-        let filter = format!(
-            "provider_id='{}' && provider_product_url='{}'",
-            provider.id, provider_product_url
-        );
-        let existing = self
-            .client
-            .records(PROVIDER_PRODUCTS_COLLECTION)
-            .list()
-            .filter(&filter)
-            .per_page(1)
-            .call::<ProviderProductRow>()
-            .context("could not look up provider product")?;
-        if let Some(row) = existing.items.into_iter().next() {
+        if let Some(row) = self.find_provider_product(&provider.id, "product_name", product_name)? {
+            return Ok(row);
+        }
+        if let Some(row) = self.find_provider_product(
+            &provider.id,
+            "provider_product_url",
+            provider_product_url,
+        )? {
             return Ok(row);
         }
         let created = self
@@ -260,6 +258,24 @@ impl Store {
             .call()
             .map_err(|e| anyhow::anyhow!("could not create provider product: {e}"))?;
         Ok(ProviderProductRow { id: created.id })
+    }
+
+    fn find_provider_product(
+        &self,
+        provider_id: &str,
+        field: &str,
+        value: &str,
+    ) -> Result<Option<ProviderProductRow>> {
+        let filter = format!("provider_id='{provider_id}' && {field}='{value}'");
+        let existing = self
+            .client
+            .records(PROVIDER_PRODUCTS_COLLECTION)
+            .list()
+            .filter(&filter)
+            .per_page(1)
+            .call::<ProviderProductRow>()
+            .context("could not look up provider product")?;
+        Ok(existing.items.into_iter().next())
     }
 
     /// Inserts a price row only when it differs from the last recorded price

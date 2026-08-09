@@ -200,6 +200,29 @@ fn save_round_trips_through_the_api() {
         "a currency change with the same price inserts a new row"
     );
 
+    let mut new_url = sample_detection();
+    new_url.products[0].url = Some("/a/light-blue-homme-edp-50-v2".to_string());
+    new_url.products[0].currency = Some("USD".to_string());
+    store
+        .save(url, 123460, &capture_path, &new_url)
+        .expect("save same name at a new url");
+    let named = client
+        .records("provider_products")
+        .list()
+        .filter("provider_product_url='/a/light-blue-homme-edp-50-v2'")
+        .call::<ProviderProductRow>()
+        .expect("list provider products");
+    assert!(
+        named.items.is_empty(),
+        "same product_name at a new url must reuse the existing row, got {:?}",
+        named.items
+    );
+    assert_eq!(
+        count_prices(),
+        3,
+        "reusing a row with an unchanged price adds no price row"
+    );
+
     let images = client
         .records("provider_product_images")
         .list()

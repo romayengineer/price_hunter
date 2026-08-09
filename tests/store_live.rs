@@ -83,7 +83,7 @@ fn env_password() -> String {
 }
 
 /// Round-trips a detection through the PocketBase Record API against the
-/// normalized schema (providers, scrapes, provider_products, provider_prices,
+/// normalized schema (providers, scrapes, provider_products, provider_product_prices,
 /// provider_product_images) and verifies the rows land. Requires a running PocketBase
 /// (`pocketbase serve --dir ... --migrationsDir pocketbase/migrations`).
 #[test]
@@ -139,7 +139,7 @@ fn save_round_trips_through_the_api() {
     );
 
     let prices = client
-        .records("provider_prices")
+        .records("provider_product_prices")
         .list()
         .call::<PriceRow>()
         .expect("list prices");

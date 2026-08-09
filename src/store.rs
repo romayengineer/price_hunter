@@ -9,7 +9,7 @@ const PROVIDERS_COLLECTION: &str = "providers";
 const SCRAPES_COLLECTION: &str = "scrapes";
 const PROVIDER_PRODUCTS_COLLECTION: &str = "provider_products";
 const PROVIDER_PRODUCT_IMAGES_COLLECTION: &str = "provider_product_images";
-const PROVIDER_PRICES_COLLECTION: &str = "provider_prices";
+const PROVIDER_PRODUCT_PRICES_COLLECTION: &str = "provider_product_prices";
 
 /// Payload for the `providers` collection.
 #[derive(Serialize, Clone)]
@@ -77,7 +77,7 @@ struct ProductImageRow {
     id: String,
     url: String,
     position: usize,
-}/// Payload for the `provider_prices` collection.
+}/// Payload for the `provider_product_prices` collection.
 #[derive(Serialize, Clone)]
 struct ProviderPricePayload {
     provider_product_id: String,
@@ -89,7 +89,7 @@ struct ProviderPricePayload {
 
 /// Persists detections to a running PocketBase through its Record API using the
 /// normalized schema documented in DATABASE.md (providers, scrapes,
-/// provider_products, provider_product_images, provider_prices).
+/// provider_products, provider_product_images, provider_product_prices).
 ///
 /// The scraper NEVER writes SQL or touches the database file directly — all
 /// writes go through the PocketBase HTTP API as an authenticated superuser
@@ -123,7 +123,7 @@ impl Store {
     /// Persists one detection through the Record API:
     /// one `scrapes` record, then per detected product one `provider_products`
     /// (upserted by `(provider_id, provider_product_url)`), one
-    /// `provider_prices` record and its `provider_product_images` rows.
+    /// `provider_product_prices` record and its `provider_product_images` rows.
     pub fn save(
         &self,
         url: &str,
@@ -251,7 +251,7 @@ impl Store {
         product: &crate::detect::Product,
     ) -> Result<()> {
         self.client
-            .records(PROVIDER_PRICES_COLLECTION)
+            .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
             .create(ProviderPricePayload {
                 provider_product_id: provider_product_id.to_string(),
                 scrape_id: scrape_id.to_string(),

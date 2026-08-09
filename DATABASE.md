@@ -11,7 +11,7 @@ erDiagram
         varchar domain UK "e.g. www.provider.com"
         varchar name
         boolean enabled
-        varchar default_currency "fallback for provider_prices.currency"
+        varchar default_currency "fallback for provider_product_prices.currency"
         datetime created_at
     }
 
@@ -69,7 +69,7 @@ erDiagram
         datetime created_at
     }
 
-    provider_prices {
+    provider_product_prices {
         int id PK
         int provider_product_id FK "references provider_products.id"
         int scrape_id FK "references scrapes.id"
@@ -85,8 +85,8 @@ erDiagram
     provider_products ||--o{ product_matches : "has candidates"
     products o|--o{ product_matches : "suggested as"
     provider_products ||--o{ provider_product_images : "shows"
-    scrapes ||--o{ provider_prices : "observed in"
-    provider_products ||--o{ provider_prices : "has prices at"
+    scrapes ||--o{ provider_product_prices : "observed in"
+    provider_products ||--o{ provider_product_prices : "has prices at"
 ```
 
 ## Tables
@@ -184,7 +184,7 @@ When a match is confirmed, `provider_products.product_id` is set to the same `pr
 
 Unique: `(provider_product_id, product_id)` prevents duplicate candidate rows; at most one `confirmed` row per provider product.
 
-### provider_prices
+### provider_product_prices
 
 Price observations for a provider product over time.
 

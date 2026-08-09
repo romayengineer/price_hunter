@@ -50,7 +50,7 @@ echo "  pocketbase serve --dir \"$DATA_DIR\" --migrationsDir \"$MIGRATIONS_DIR\"
 echo "  Admin dashboard:  $BASE_URL/_/   (login with $ADMIN_EMAIL)"
 echo "  Scrapes API:      $BASE_URL/api/collections/scrapes/records"
 echo "  Provider products: $BASE_URL/api/collections/provider_products/records"
-echo "  Prices API:       $BASE_URL/api/collections/provider_prices/records"
+echo "  Prices API:       $BASE_URL/api/collections/provider_product_prices/records"
 echo
 echo "Records are world-readable (listRule/viewRule = \"\"). Writes are only"
 echo "allowed via the superuser token, which the scraper obtains by logging in"

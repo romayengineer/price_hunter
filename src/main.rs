@@ -14,6 +14,9 @@ use price_hunter::store::Store;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
+    if let Some(path) = import_products_arg(&args) {
+        return import_products(&path);
+    }
     let url = parse_args(&args);
     let store = connect_store()?;
     let driver = browser::launch().await?;
@@ -39,6 +42,24 @@ fn connect_store() -> anyhow::Result<Store> {
     let store = Store::connect().context("cannot connect to PocketBase")?;
     println!("Persisting captures to PocketBase via its API");
     Ok(store)
+}
+
+/// Returns the CSV path when `-import-products <file>` is present.
+fn import_products_arg(args: &[String]) -> Option<String> {
+    args.iter()
+        .skip(1)
+        .position(|a| a == "-import-products")
+        .and_then(|i| args.get(i + 2).cloned())
+}
+
+/// Imports `brand,name,size` rows from a CSV into the `products` table and
+/// exits without opening a browser.
+fn import_products(path: &str) -> anyhow::Result<()> {
+    config::Config::ensure_template();
+    let store = Store::connect().context("cannot connect to PocketBase")?;
+    let created = store.import_products_csv(std::path::Path::new(path))?;
+    println!("Done: {created} products imported");
+    Ok(())
 }
 
 fn parse_args(args: &[String]) -> Option<String> {

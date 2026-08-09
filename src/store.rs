@@ -4,11 +4,34 @@ use serde::{Deserialize, Serialize};
 
 use crate::detect::Detection;
 
+const PRODUCTS_COLLECTION: &str = "products";
 const PROVIDERS_COLLECTION: &str = "providers";
 const SCRAPES_COLLECTION: &str = "scrapes";
 const PROVIDER_PRODUCTS_COLLECTION: &str = "provider_products";
 const PROVIDER_PRODUCT_IMAGES_COLLECTION: &str = "provider_product_images";
 const PROVIDER_PRODUCT_PRICES_COLLECTION: &str = "provider_product_prices";
+
+/// Payload for the `products` collection.
+#[derive(Serialize, Clone)]
+struct ProductImportPayload {
+    brand: String,
+    name: String,
+    size: String,
+    category: String,
+    active: bool,
+}
+
+#[derive(Default, Deserialize, Debug)]
+#[allow(dead_code)]
+struct ProductImportRow {
+    id: String,
+}
+
+/// Result of importing a single CSV row.
+enum RowOutcome {
+    Created,
+    Skipped,
+}
 
 /// Payload for the `providers` collection.
 #[derive(Serialize, Clone)]
@@ -181,6 +204,72 @@ impl Store {
         self.create_price(&provider_product.id, scrape_id, currency, product)?;
         self.sync_images(&provider_product.id, &product.images)?;
         Ok(())
+    }
+
+    /// Imports rows from a CSV with `brand,name,size` columns into the
+    /// `products` collection. Rows already present (unique on
+    /// `(brand, name, size)`) are skipped; the rest are created with
+    /// `active = true`. Returns the number of rows created.
+    pub fn import_products_csv(&self, path: &std::path::Path) -> Result<usize> {
+        let mut reader = csv::Reader::from_path(path).with_context(|| {
+            format!("could not read CSV at {}", path.display())
+        })?;
+        let mut created = 0usize;
+        let mut skipped = 0usize;
+        for result in reader.records() {
+            let record = result.with_context(|| format!("could not parse CSV at {}", path.display()))?;
+            match self.import_csv_row(&record)? {
+                RowOutcome::Created => created += 1,
+                RowOutcome::Skipped => skipped += 1,
+            }
+        }
+        println!("Imported {created} products, skipped {skipped}");
+        Ok(created)
+    }
+
+    /// Imports one CSV row into `products`, returning whether it was created
+    /// or skipped as a duplicate.
+    fn import_csv_row(&self, record: &csv::StringRecord) -> Result<RowOutcome> {
+        let brand = record.get(0).unwrap_or_default().trim().to_string();
+        let name = record.get(1).unwrap_or_default().trim().to_string();
+        let size = record.get(2).unwrap_or_default().trim().to_string();
+        if name.is_empty() {
+            return Ok(RowOutcome::Skipped);
+        }
+        if self.find_product(&brand, &name, &size)?.is_some() {
+            return Ok(RowOutcome::Skipped);
+        }
+        self.client
+            .records(PRODUCTS_COLLECTION)
+            .create(ProductImportPayload {
+                brand,
+                name,
+                size,
+                category: String::new(),
+                active: true,
+            })
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not import product: {e}"))
+            .map(|_| RowOutcome::Created)
+    }
+
+    /// Returns the existing canonical product for `(brand, name, size)`.
+    fn find_product(&self, brand: &str, name: &str, size: &str) -> Result<Option<ProductImportRow>> {
+        let filter = format!(
+            "brand='{}' && name='{}' && size='{}'",
+            escape_filter(brand),
+            escape_filter(name),
+            escape_filter(size)
+        );
+        let existing = self
+            .client
+            .records(PRODUCTS_COLLECTION)
+            .list()
+            .filter(&filter)
+            .per_page(1)
+            .call::<ProductImportRow>()
+            .context("could not look up product")?;
+        Ok(existing.items.into_iter().next())
     }
 
     /// Returns the existing provider for `domain` or creates it (name = domain,
@@ -541,6 +630,23 @@ mod tests {
         assert_eq!(json["price"], 242100.0);
         assert_eq!(json["currency"], "ARS");
         assert_eq!(json["price_text"], "242.100");
+    }
+
+    #[test]
+    fn product_import_payload_serializes_csv_columns_and_active() {
+        let payload = ProductImportPayload {
+            brand: "adolfo dominguez".to_string(),
+            name: "adn neroli ecstasy".to_string(),
+            size: "100 ml".to_string(),
+            category: String::new(),
+            active: true,
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["brand"], "adolfo dominguez");
+        assert_eq!(json["name"], "adn neroli ecstasy");
+        assert_eq!(json["size"], "100 ml");
+        assert_eq!(json["category"], "");
+        assert_eq!(json["active"], true);
     }
 
     #[test]

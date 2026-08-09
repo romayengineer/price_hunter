@@ -60,7 +60,7 @@ erDiagram
         boolean is_primary
     }
 
-    product_matches {
+    provider_product_matches {
         int id PK
         int provider_product_id FK "references provider_products.id"
         int product_id FK "references products.id"
@@ -82,8 +82,8 @@ erDiagram
     providers ||--o{ scrapes : "scraped by"
     providers ||--o{ provider_products : "lists"
     products o|--o{ provider_products : "matched to"
-    provider_products ||--o{ product_matches : "has candidates"
-    products o|--o{ product_matches : "suggested as"
+    provider_products ||--o{ provider_product_matches : "has candidates"
+    products o|--o{ provider_product_matches : "suggested as"
     provider_products ||--o{ provider_product_images : "shows"
     scrapes ||--o{ provider_product_prices : "observed in"
     provider_products ||--o{ provider_product_prices : "has prices at"
@@ -134,7 +134,7 @@ One poll of a provider page (one `capture-<timestamp>.json` file).
 
 ### provider_products
 
-A product as listed on a specific provider's site. `product_name` is extracted from the HTML; the confirmed mapping to a canonical `products` row lives in `product_id`, with candidate/recommended matches in `product_matches`.
+A product as listed on a specific provider's site. `product_name` is extracted from the HTML; the confirmed mapping to a canonical `products` row lives in `product_id`, with candidate/recommended matches in `provider_product_matches`.
 
 | Column                | Type     | Notes |
 | --------------------- | -------- | ----- |
@@ -167,7 +167,7 @@ Images scraped from a provider product's card. Stored as rows (not an array) so 
 
 Unique: `(provider_product_id, position)`; at most one `is_primary = true` row per provider product.
 
-### product_matches
+### provider_product_matches
 
 Fuzzy-match results between a provider product and canonical products. Stores the top candidates and their status so recommendations are separate from human-confirmed decisions.
 

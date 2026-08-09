@@ -1,7 +1,7 @@
 // Creates the price_hunter schema (mirrors DATABASE.md):
 //
 //   providers, products (canonical), scrapes, provider_products,
-//   provider_product_images, product_matches, provider_product_prices
+//   provider_product_images, provider_product_matches, provider_product_prices
 //
 // No SQL anywhere — schema is defined through the PocketBase JS migration API
 // only.
@@ -152,14 +152,14 @@ migrate(
 
     const productMatches = new Collection({
       type: "base",
-      name: "product_matches",
+      name: "provider_product_matches",
       listRule: "",
       viewRule: "",
       createRule: null,
       updateRule: null,
       deleteRule: null,
       indexes: [
-        "CREATE UNIQUE INDEX idx_product_matches_pair ON product_matches (provider_product_id, product_id)",
+        "CREATE UNIQUE INDEX idx_provider_product_matches_pair ON provider_product_matches (provider_product_id, product_id)",
       ],
       fields: [
         {
@@ -221,9 +221,9 @@ migrate(
   },
   (app) => {
     for (const name of [
-      "product_matches",
       "products",
       "provider_product_images",
+      "provider_product_matches",
       "provider_product_prices",
       "provider_products",
       "providers",

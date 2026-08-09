@@ -1,0 +1,170 @@
+//! Pure fuzzy-matching between provider products and canonical products.
+//! No PocketBase types here — the store feeds in plain rows and persists the
+//! results.
+
+/// Minimum score for a provider product to be linked to a canonical product.
+pub const MIN_SCORE: f64 = 0.6;
+
+/// A provider product as seen on a site.
+pub struct ProviderProduct {
+    pub id: String,
+    pub name: String,
+}
+
+/// A canonical product from the `products` collection.
+pub struct Product {
+    pub id: String,
+    pub name: String,
+}
+
+/// One scored (provider product, canonical product) comparison.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MatchCandidate {
+    pub provider_product_id: String,
+    pub product_id: String,
+    pub score: f64,
+}
+
+/// Lowers the name, splits it into tokens on non-alphanumeric boundaries and
+/// returns the sorted tokens joined by spaces. Sorting makes the comparison
+/// order-insensitive, so "Light Blue Homme EDP 50" and "EDP 50 Light Blue
+/// Homme" normalize to the same string.
+fn normalize(name: &str) -> String {
+    let mut tokens: Vec<String> = name
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned)
+        .collect();
+    tokens.sort();
+    tokens.join(" ")
+}
+
+/// Sørensen-Dice similarity between two product names (0.0–1.0).
+pub fn similarity(a: &str, b: &str) -> f64 {
+    strsim::sorensen_dice(&normalize(a), &normalize(b))
+}
+
+/// Returns every (provider product, canonical product) pair whose similarity
+/// is at or above `MIN_SCORE`.
+pub fn above_threshold(
+    provider_products: &[ProviderProduct],
+    products: &[Product],
+) -> Vec<MatchCandidate> {
+    provider_products
+        .iter()
+        .flat_map(|pp| {
+            products.iter().filter_map(|product| {
+                let score = similarity(&pp.name, &product.name);
+                (score >= MIN_SCORE).then(|| MatchCandidate {
+                    provider_product_id: pp.id.clone(),
+                    product_id: product.id.clone(),
+                    score,
+                })
+            })
+        })
+        .collect()
+}
+
+/// Greedily assigns canonical products to provider products within one
+/// provider group: sorts candidates by score (highest first) and claims a
+/// provider product iff it is not yet assigned and the product has not already
+/// been claimed by another provider product in the group. Returns the winning
+/// candidates.
+pub fn assign_group(candidates: &[MatchCandidate]) -> Vec<MatchCandidate> {
+    let mut sorted = candidates.to_vec();
+    sorted.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut claimed_products: Vec<String> = Vec::new();
+    let mut winners = Vec::new();
+    for candidate in sorted {
+        let product_claimed = claimed_products.contains(&candidate.product_id);
+        let provider_assigned = winners
+            .iter()
+            .any(|w: &MatchCandidate| w.provider_product_id == candidate.provider_product_id);
+        if !product_claimed && !provider_assigned {
+            claimed_products.push(candidate.product_id.clone());
+            winners.push(candidate);
+        }
+    }
+    winners
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_is_case_and_order_insensitive() {
+        assert_eq!(
+            normalize("Light Blue Homme EDP 50"),
+            normalize("edp 50 light blue homme")
+        );
+        assert_eq!(normalize("Adn Neroli Ectasy!!"), normalize("adn neroli ectasy"));
+    }
+
+    #[test]
+    fn similarity_handles_word_reordering() {
+        let score = similarity("Light Blue Homme EDP 50", "EDP 50 Light Blue Homme");
+        assert!(
+            score >= 0.9,
+            "reordered words should score high, got {score}"
+        );
+    }
+
+    #[test]
+    fn similarity_lowers_for_different_names() {
+        let score = similarity("adn neroli ecstasy", "rose spicy edp");
+        assert!(
+            score < MIN_SCORE,
+            "unrelated names should score low, got {score}"
+        );
+    }
+
+    fn sample_rows() -> (Vec<ProviderProduct>, Vec<Product>) {
+        (
+            vec![
+                ProviderProduct { id: "pp1".into(), name: "Light Blue Homme EDP 50".into() },
+                ProviderProduct { id: "pp2".into(), name: "totally unrelated".into() },
+            ],
+            vec![
+                Product { id: "p1".into(), name: "EDP 50 Light Blue Homme".into() },
+                Product { id: "p2".into(), name: "Rose Spicy EDP".into() },
+            ],
+        )
+    }
+
+    #[test]
+    fn above_threshold_filters_low_scores() {
+        let (provider_products, products) = sample_rows();
+        let candidates = above_threshold(&provider_products, &products);
+        assert!(
+            candidates.iter().any(|c| c.product_id == "p1"),
+            "matching name should be a candidate"
+        );
+        assert!(
+            candidates.iter().all(|c| c.provider_product_id != "pp2"),
+            "low-scoring provider product should be filtered out"
+        );
+    }
+
+    #[test]
+    fn assign_group_picks_highest_and_does_not_reuse_products() {
+        let candidates = vec![
+            MatchCandidate { provider_product_id: "pp1".into(), product_id: "p1".into(), score: 0.8 },
+            MatchCandidate { provider_product_id: "pp1".into(), product_id: "p2".into(), score: 0.9 },
+            MatchCandidate { provider_product_id: "pp2".into(), product_id: "p1".into(), score: 0.95 },
+        ];
+        let winners = assign_group(&candidates);
+        assert_eq!(
+            winners,
+            vec![
+                MatchCandidate { provider_product_id: "pp2".into(), product_id: "p1".into(), score: 0.95 },
+                MatchCandidate { provider_product_id: "pp1".into(), product_id: "p2".into(), score: 0.9 },
+            ]
+        );
+    }
+}

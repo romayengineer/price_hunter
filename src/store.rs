@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use pocketbase_sdk::client::{Auth, Client};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::detect::Detection;
 
@@ -9,6 +10,7 @@ const PROVIDERS_COLLECTION: &str = "providers";
 const SCRAPES_COLLECTION: &str = "scrapes";
 const PROVIDER_PRODUCTS_COLLECTION: &str = "provider_products";
 const PROVIDER_PRODUCT_IMAGES_COLLECTION: &str = "provider_product_images";
+const PROVIDER_PRODUCT_MATCHES_COLLECTION: &str = "provider_product_matches";
 const PROVIDER_PRODUCT_PRICES_COLLECTION: &str = "provider_product_prices";
 
 /// Payload for the `products` collection.
@@ -81,6 +83,39 @@ struct ProviderProductPayload {
 #[derive(Default, Deserialize, Debug)]
 #[allow(dead_code)]
 struct ProviderProductRow {
+    id: String,
+    provider_id: String,
+    product_name: String,
+    product_id: Option<String>,
+}
+
+/// A canonical product used by the fuzzy matcher.
+#[derive(Default, Deserialize, Debug)]
+#[allow(dead_code)]
+struct ProductRow {
+    id: String,
+    name: String,
+}
+
+/// Payload for updating `provider_products.product_id`. A `None` value
+/// serializes as `null`, clearing the relation.
+#[derive(Serialize, Clone)]
+struct ProductLinkPayload {
+    product_id: Option<String>,
+}
+
+/// Payload for the `provider_product_matches` collection.
+#[derive(Serialize, Clone)]
+struct ProviderMatchPayload {
+    provider_product_id: String,
+    product_id: String,
+    score: f64,
+    status: String,
+}
+
+#[derive(Default, Deserialize, Debug)]
+#[allow(dead_code)]
+struct ProviderMatchRow {
     id: String,
 }
 
@@ -363,7 +398,10 @@ impl Store {
             })
             .call()
             .map_err(|e| anyhow::anyhow!("could not create provider product: {e}"))?;
-        Ok(ProviderProductRow { id: created.id })
+        Ok(ProviderProductRow {
+            id: created.id,
+            ..ProviderProductRow::default()
+        })
     }
 
     fn find_provider_product(
@@ -491,6 +529,257 @@ impl Store {
                     .call()
                     .map_err(|e| anyhow::anyhow!("could not delete stale product image: {e}"))?;
             }
+        }
+        Ok(())
+    }
+
+    /// Runs the fuzzy matcher between provider products and canonical
+    /// products. Recomputes from scratch: existing matches and product links
+    /// are cleared, all above-threshold comparisons are written to
+    /// `provider_product_matches`, and the best match per provider product is
+    /// linked (per-provider exclusivity). Returns how many provider products
+    /// were matched.
+    pub fn match_products(&self) -> Result<usize> {
+        let products = self.list_products()?;
+        let provider_products = self.list_provider_products()?;
+        let provider_of: HashMap<&str, &str> = provider_products
+            .iter()
+            .map(|p| (p.id.as_str(), p.provider_id.as_str()))
+            .collect();
+        let candidates = crate::matching::above_threshold(
+            &provider_products
+                .iter()
+                .map(|p| crate::matching::ProviderProduct {
+                    id: p.id.clone(),
+                    name: p.product_name.clone(),
+                })
+                .collect::<Vec<_>>(),
+            &products
+                .iter()
+                .map(|p| crate::matching::Product {
+                    id: p.id.clone(),
+                    name: p.name.clone(),
+                })
+                .collect::<Vec<_>>(),
+        );
+        self.clear_previous_matches(&provider_products)?;
+        self.write_candidates(&candidates)?;
+        let matched = self.link_winners(&candidates, &provider_of)?;
+        println!(
+            "Matched {matched} of {} provider products",
+            provider_products.len()
+        );
+        Ok(matched)
+    }
+
+    /// Lists every canonical product with `active = true`.
+    fn list_products(&self) -> Result<Vec<ProductRow>> {
+        let mut items = Vec::new();
+        let mut page = 1;
+        loop {
+            let result = self
+                .client
+                .records(PRODUCTS_COLLECTION)
+                .list()
+                .filter("active=true")
+                .page(page)
+                .per_page(100)
+                .call::<ProductRow>()
+                .context("could not list products")?;
+            let count = result.items.len();
+            items.extend(result.items);
+            if count < 100 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(items)
+    }
+
+    /// Lists every provider product.
+    fn list_provider_products(&self) -> Result<Vec<ProviderProductRow>> {
+        let mut items = Vec::new();
+        let mut page = 1;
+        loop {
+            let result = self
+                .client
+                .records(PROVIDER_PRODUCTS_COLLECTION)
+                .list()
+                .page(page)
+                .per_page(100)
+                .call::<ProviderProductRow>()
+                .context("could not list provider products")?;
+            let count = result.items.len();
+            items.extend(result.items);
+            if count < 100 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(items)
+    }
+
+    /// Clears every existing match row and nulls out `product_id` on all
+    /// provider products so the matcher recomputes from scratch.
+    fn clear_previous_matches(&self, provider_products: &[ProviderProductRow]) -> Result<()> {
+        self.delete_all_matches()?;
+        for pp in provider_products {
+            self.client
+                .records(PROVIDER_PRODUCTS_COLLECTION)
+                .update(&pp.id, ProductLinkPayload { product_id: None })
+                .call()
+                .map_err(|e| anyhow::anyhow!("could not clear product link: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Deletes every row in `provider_product_matches`.
+    fn delete_all_matches(&self) -> Result<()> {
+        let match_ids = self.list_match_ids()?;
+        for id in match_ids {
+            self.client
+                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
+                .destroy(&id)
+                .call()
+                .map_err(|e| anyhow::anyhow!("could not delete match: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Lists the ids of every row in `provider_product_matches`.
+    fn list_match_ids(&self) -> Result<Vec<String>> {
+        let mut ids = Vec::new();
+        let mut page = 1;
+        loop {
+            let result = self
+                .client
+                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
+                .list()
+                .page(page)
+                .per_page(100)
+                .call::<ProviderMatchRow>()
+                .context("could not list matches")?;
+            let count = result.items.len();
+            ids.extend(result.items.into_iter().map(|r| r.id));
+            if count < 100 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(ids)
+    }
+
+    /// Writes every candidate pair to `provider_product_matches` with
+    /// `status = "pending"`.
+    fn write_candidates(&self, candidates: &[crate::matching::MatchCandidate]) -> Result<()> {
+        for c in candidates {
+            let payload = ProviderMatchPayload {
+                provider_product_id: c.provider_product_id.clone(),
+                product_id: c.product_id.clone(),
+                score: c.score,
+                status: "pending".to_string(),
+            };
+            self.client
+                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
+                .create(payload)
+                .call()
+                .map_err(|e| anyhow::anyhow!("could not write match: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Greedily assigns canonical products within each provider group, sets
+    /// `provider_products.product_id` and marks the winning match row
+    /// confirmed. Returns the number of provider products linked.
+    fn link_winners(
+        &self,
+        candidates: &[crate::matching::MatchCandidate],
+        provider_of: &HashMap<&str, &str>,
+    ) -> Result<usize> {
+        let grouped = self.group_by_provider(candidates, provider_of);
+        let mut matched = 0;
+        for group in grouped.values() {
+            matched += self.apply_group(group)?;
+        }
+        Ok(matched)
+    }
+
+    /// Groups candidates by their provider id (owned values avoid borrow
+    /// lifetime juggling).
+    fn group_by_provider(
+        &self,
+        candidates: &[crate::matching::MatchCandidate],
+        provider_of: &HashMap<&str, &str>,
+    ) -> HashMap<String, Vec<crate::matching::MatchCandidate>> {
+        let mut grouped: HashMap<String, Vec<crate::matching::MatchCandidate>> = HashMap::new();
+        for c in candidates {
+            if let Some(pid) = provider_of.get(c.provider_product_id.as_str()) {
+                grouped
+                    .entry((*pid).to_string())
+                    .or_default()
+                    .push(c.clone());
+            }
+        }
+        grouped
+    }
+
+    /// Assigns and links the winners of one provider group.
+    fn apply_group(&self, group: &[crate::matching::MatchCandidate]) -> Result<usize> {
+        let mut matched = 0;
+        for winner in crate::matching::assign_group(group) {
+            self.link_product(&winner)?;
+            matched += 1;
+        }
+        Ok(matched)
+    }
+
+    /// Links a winning provider product to its canonical product and marks the
+    /// match row as confirmed.
+    fn link_product(&self, winner: &crate::matching::MatchCandidate) -> Result<()> {
+        self.client
+            .records(PROVIDER_PRODUCTS_COLLECTION)
+            .update(
+                &winner.provider_product_id,
+                ProductLinkPayload {
+                    product_id: Some(winner.product_id.clone()),
+                },
+            )
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not link product: {e}"))?;
+        self.mark_confirmed(winner)?;
+        Ok(())
+    }
+
+    /// Marks the match row for `(provider_product_id, product_id)` as
+    /// confirmed.
+    fn mark_confirmed(&self, winner: &crate::matching::MatchCandidate) -> Result<()> {
+        let filter = format!(
+            "provider_product_id='{}' && product_id='{}'",
+            escape_filter(&winner.provider_product_id),
+            escape_filter(&winner.product_id)
+        );
+        let existing = self
+            .client
+            .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
+            .list()
+            .filter(&filter)
+            .per_page(1)
+            .call::<ProviderMatchRow>()
+            .context("could not look up match")?;
+        if let Some(row) = existing.items.into_iter().next() {
+            self.client
+                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
+                .update(
+                    &row.id,
+                    ProviderMatchPayload {
+                        provider_product_id: winner.provider_product_id.clone(),
+                        product_id: winner.product_id.clone(),
+                        score: winner.score,
+                        status: "confirmed".to_string(),
+                    },
+                )
+                .call()
+                .map_err(|e| anyhow::anyhow!("could not confirm match: {e}"))?;
         }
         Ok(())
     }
@@ -630,6 +919,33 @@ mod tests {
         assert_eq!(json["price"], 242100.0);
         assert_eq!(json["currency"], "ARS");
         assert_eq!(json["price_text"], "242.100");
+    }
+
+    #[test]
+    fn match_payload_serializes_relations_score_and_status() {
+        let payload = ProviderMatchPayload {
+            provider_product_id: "pp-1".to_string(),
+            product_id: "prod-1".to_string(),
+            score: 0.87,
+            status: "confirmed".to_string(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["provider_product_id"], "pp-1");
+        assert_eq!(json["product_id"], "prod-1");
+        assert_eq!(json["score"], 0.87);
+        assert_eq!(json["status"], "confirmed");
+    }
+
+    #[test]
+    fn product_link_payload_serializes_some_as_id_and_none_as_null() {
+        let linked = serde_json::to_value(ProductLinkPayload {
+            product_id: Some("prod-1".to_string()),
+        })
+        .unwrap();
+        assert_eq!(linked["product_id"], "prod-1");
+
+        let cleared = serde_json::to_value(ProductLinkPayload { product_id: None }).unwrap();
+        assert_eq!(cleared["product_id"], serde_json::Value::Null);
     }
 
     #[test]

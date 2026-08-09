@@ -17,6 +17,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(path) = import_products_arg(&args) {
         return import_products(&path);
     }
+    if args.iter().skip(1).any(|a| a == "-match-products") {
+        return match_products();
+    }
     let url = parse_args(&args);
     let store = connect_store()?;
     let driver = browser::launch().await?;
@@ -59,6 +62,16 @@ fn import_products(path: &str) -> anyhow::Result<()> {
     let store = Store::connect().context("cannot connect to PocketBase")?;
     let created = store.import_products_csv(std::path::Path::new(path))?;
     println!("Done: {created} products imported");
+    Ok(())
+}
+
+/// Runs the fuzzy matcher against the `products` and `provider_products`
+/// tables and exits without opening a browser.
+fn match_products() -> anyhow::Result<()> {
+    config::Config::ensure_template();
+    let store = Store::connect().context("cannot connect to PocketBase")?;
+    let matched = store.match_products()?;
+    println!("Done: {matched} provider products matched");
     Ok(())
 }
 

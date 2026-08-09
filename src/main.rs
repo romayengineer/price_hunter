@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::env;
 use std::time::Duration;
 
@@ -7,18 +8,18 @@ use price_hunter::browser;
 use price_hunter::capture;
 use price_hunter::detect;
 use price_hunter::detect::{Detection, Product};
-use price_hunter::store::{self, Store};
+use price_hunter::store::Store;
 
 #[tokio::main]
-async fn main() -> WebDriverResult<()> {
+async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
     let url = parse_args(&args);
+    let store = connect_store()?;
     let driver = browser::launch().await?;
     navigate_to_arg(&driver, url).await;
 
     println!("Browser is open and under your control. Close the window (or Ctrl+C) to exit.");
 
-    let store = connect_store();
     let mut state = LoopState {
         last_source: None,
         detection: None,
@@ -29,25 +30,13 @@ async fn main() -> WebDriverResult<()> {
         refresh(&driver, &mut state).await;
     }
 
-    driver.quit().await
+    driver.quit().await.map_err(Into::into)
 }
 
-fn connect_store() -> Option<Store> {
-    match store::Store::connect() {
-        Ok(store) => {
-            println!("Persisting captures to PocketBase via its API");
-            Some(store)
-        }
-        Err(e) => {
-            eprintln!(
-                "Could not connect to PocketBase: {e}\n\
-                 Start PocketBase first (see pocketbase/scripts/setup_pocketbase.sh) or set \
-                 POCKETBASE_URL / POCKETBASE_SUPERUSER_PASSWORD. \
-                 Captures will be written to JSON only."
-            );
-            None
-        }
-    }
+fn connect_store() -> anyhow::Result<Store> {
+    let store = Store::connect().context("cannot connect to PocketBase")?;
+    println!("Persisting captures to PocketBase via its API");
+    Ok(store)
 }
 
 fn parse_args(args: &[String]) -> Option<String> {
@@ -58,7 +47,7 @@ struct LoopState {
     last_source: Option<String>,
     detection: Option<Detection>,
     last_capture_products: Option<Vec<Product>>,
-    store: Option<Store>,
+    store: Store,
 }
 
 async fn navigate_to_arg(driver: &WebDriver, url: Option<String>) {
@@ -120,19 +109,11 @@ async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
         path.display()
     );
     let capture_path = path.display().to_string();
-    persist_to_store(&mut state.store, &url, &capture_path, detection);
+    persist_to_store(&state.store, &url, &capture_path, detection);
     state.last_capture_products = Some(detection.products.clone());
 }
 
-fn persist_to_store(
-    store: &mut Option<Store>,
-    url: &str,
-    capture_path: &str,
-    detection: &Detection,
-) {
-    let Some(store) = store else {
-        return;
-    };
+fn persist_to_store(store: &Store, url: &str, capture_path: &str, detection: &Detection) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

@@ -64,9 +64,10 @@ Public API (`src/lib.rs` re-exports modules): `browser::{launch, profile_dir}`,
 `capture::write_capture`, `detect::{detect_grid, diagnose_containers,
 Price, Product, Container, Detection, ContainerCandidate}`, `store::{Store}`.
 `Store` is a sync client (`Store::connect()` then `save(url, captured_at,
-capture_path, &Detection)`) that talks to PocketBase over its Record API; it
-returns `None` from `main`'s `connect_store()` if PocketBase is down, leaving
-JSON-only mode.
+capture_path, &Detection)`) that talks to PocketBase over its Record API. The
+connection is **required**: `main` fails fast (`exit 1`, before opening Chrome)
+if PocketBase is unreachable or `POCKETBASE_*` env vars are missing — there is
+no JSON-only fallback.
 
 ## Toolchain
 - Pinned to `stable` via `rust-toolchain.toml` (rustup auto-uses it).
@@ -84,6 +85,9 @@ JSON-only mode.
 - `bash pocketbase/scripts/run_pocketbase.sh` starts the PocketBase server
   (data dir outside the repo, repo-relative migrations dir).
 - `cargo run` opens Chrome and keeps it open until the window is closed or Ctrl+C.
+  It connects to PocketBase **first** and exits with an error if it can't (set
+  `POCKETBASE_SUPERUSER_PASSWORD` in the shell, e.g. `export
+  POCKETBASE_SUPERUSER_PASSWORD=pricehunter-dev`).
 - Optional URL arg: `cargo run -- https://example.com`. Failed navigation warns
   but keeps the session alive.
 - Captures are automatic: as soon as a grid is detected on the current page the
@@ -92,8 +96,9 @@ JSON-only mode.
   detected products (prices or names) change on a later poll. Each capture is
   also persisted to PocketBase through its HTTP API only (env:
   `POCKETBASE_URL`, `POCKETBASE_SUPERUSER_EMAIL`,
-  `POCKETBASE_SUPERUSER_PASSWORD`), which serves the Record APIs. Store failures
-  are logged and never crash the browser session.
+  `POCKETBASE_SUPERUSER_PASSWORD`), which serves the Record APIs. A failed
+  *save* is logged and never crashes the browser session — but the startup
+  *connection* is mandatory (`main` exits if it cannot connect).
 
 ## Tests
 - `cargo test` runs the fixture-based detection tests (no network/browser needed)

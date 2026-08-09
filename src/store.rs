@@ -76,7 +76,7 @@ struct ScrapeRow {
 struct ProviderProductPayload {
     provider_id: String,
     provider_product_url: String,
-    product_name: String,
+    name: String,
     last_seen_at: String,
 }
 
@@ -85,7 +85,7 @@ struct ProviderProductPayload {
 struct ProviderProductRow {
     id: String,
     provider_id: String,
-    product_name: String,
+    name: String,
     product_id: Option<String>,
 }
 
@@ -365,19 +365,19 @@ impl Store {
             .map(|r| ScrapeRow { id: r.id })
     }
 
-    /// Returns the provider product for `(provider_id, product_name)`, falling
+    /// Returns the provider product for `(provider_id, name)`, falling
     /// back to the `(provider_id, provider_product_url)` match, creating it
-    /// (with `product_name` and `last_seen_at` set) when neither exists.
+    /// (with `name` and `last_seen_at` set) when neither exists.
     ///
-    /// `product_name` is unique per provider, so a name that shows up under a
+    /// `name` is unique per provider, so a name that shows up under a
     /// new URL reuses the existing row instead of creating a duplicate.
     fn ensure_provider_product(
         &self,
         provider: &ProviderRow,
         provider_product_url: &str,
-        product_name: &str,
+        name: &str,
     ) -> Result<ProviderProductRow> {
-        if let Some(row) = self.find_provider_product(&provider.id, "product_name", product_name)? {
+        if let Some(row) = self.find_provider_product(&provider.id, "name", name)? {
             return Ok(row);
         }
         if let Some(row) = self.find_provider_product(
@@ -393,7 +393,7 @@ impl Store {
             .create(ProviderProductPayload {
                 provider_id: provider.id.clone(),
                 provider_product_url: provider_product_url.to_string(),
-                product_name: product_name.to_string(),
+                name: name.to_string(),
                 last_seen_at: iso8601(now_secs()),
             })
             .call()
@@ -551,7 +551,7 @@ impl Store {
                 .iter()
                 .map(|p| crate::matching::ProviderProduct {
                     id: p.id.clone(),
-                    name: p.product_name.clone(),
+                    name: p.name.clone(),
                 })
                 .collect::<Vec<_>>(),
             &products
@@ -827,7 +827,7 @@ fn host_of(url: &str) -> String {
 
 /// Escapes a value for use inside a PocketBase filter string literal. Single
 /// quotes and backslashes must be backslash-escaped or the filter parses
-/// wrong (e.g. `product_name='A Drop d'Issey...'` → HTTP 400), which used to
+/// wrong (e.g. `name='A Drop d'Issey...'` → HTTP 400), which used to
 /// abort the whole save and silently drop the rest of a capture.
 fn escape_filter(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\'', "\\'")
@@ -892,7 +892,7 @@ mod tests {
         let payload = ProviderProductPayload {
             provider_id: "prov-1".to_string(),
             provider_product_url: "/a/light-blue-homme-edp-50".to_string(),
-            product_name: String::new(),
+            name: String::new(),
             last_seen_at: iso8601(123456),
         };
         let json = serde_json::to_value(&payload).unwrap();
@@ -901,6 +901,7 @@ mod tests {
             json["provider_product_url"],
             "/a/light-blue-homme-edp-50"
         );
+        assert_eq!(json["name"], "");
         assert_eq!(json["last_seen_at"], "1970-01-02 10:17:36.000Z");
     }
 

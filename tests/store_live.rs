@@ -61,7 +61,7 @@ struct ScrapeRow {
 struct ProviderProductRow {
     id: String,
     provider_product_url: String,
-    product_name: String,
+    name: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -150,7 +150,7 @@ fn save_round_trips_through_the_api() {
         products
             .items
             .iter()
-            .any(|p| p.product_name == "A Drop d'Issey EDP Fraîche"),
+            .any(|p| p.name == "A Drop d'Issey EDP Fraîche"),
         "an apostrophe in the product name must not break persistence, got {:?}",
         products.items
     );
@@ -231,7 +231,7 @@ fn save_round_trips_through_the_api() {
         .expect("list provider products");
     assert!(
         named.items.is_empty(),
-        "same product_name at a new url must reuse the existing row, got {:?}",
+        "same name at a new url must reuse the existing row, got {:?}",
         named.items
     );
     assert_eq!(

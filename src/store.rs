@@ -34,7 +34,7 @@ struct ProviderRow {
 struct ScrapePayload {
     provider_id: String,
     url: String,
-    scraped_at: u64,
+    scraped_at: String,
     status: String,
     capture_path: String,
     product_count: usize,
@@ -53,7 +53,7 @@ struct ProviderProductPayload {
     provider_id: String,
     provider_product_url: String,
     product_name: String,
-    last_seen_at: u64,
+    last_seen_at: String,
 }
 
 #[derive(Default, Deserialize, Debug)]
@@ -77,7 +77,17 @@ struct ProductImageRow {
     id: String,
     url: String,
     position: usize,
-}/// Payload for the `provider_product_prices` collection.
+}
+
+#[derive(Default, Deserialize, Debug)]
+#[allow(dead_code)]
+struct PriceRow {
+    id: String,
+    price: f64,
+    currency: String,
+}
+
+/// Payload for the `provider_product_prices` collection.
 #[derive(Serialize, Clone)]
 struct ProviderPricePayload {
     provider_product_id: String,
@@ -122,8 +132,9 @@ impl Store {
 
     /// Persists one detection through the Record API:
     /// one `scrapes` record, then per detected product one `provider_products`
-    /// (upserted by `(provider_id, provider_product_url)`), one
-    /// `provider_product_prices` record and its `provider_product_images` rows.
+    /// (upserted by `(provider_id, provider_product_url)`), a
+    /// `provider_product_prices` record only when the price changed, and its
+    /// `provider_product_images` rows.
     pub fn save(
         &self,
         url: &str,
@@ -135,8 +146,11 @@ impl Store {
         let provider = self.ensure_provider(&host)?;
         let scrape = self.create_scrape(url, captured_at, capture_path, &provider.id, detection)?;
         for product in &detection.products {
-            let provider_product =
-                self.ensure_provider_product(&provider, product.url.as_deref().unwrap_or(""))?;
+            let provider_product = self.ensure_provider_product(
+                &provider,
+                product.url.as_deref().unwrap_or(""),
+                &product.name,
+            )?;
             let currency = product
                 .currency
                 .clone()
@@ -195,7 +209,7 @@ impl Store {
             .create(ScrapePayload {
                 provider_id: provider_id.to_string(),
                 url: url.to_string(),
-                scraped_at: captured_at,
+                scraped_at: iso8601(captured_at),
                 status: "success".to_string(),
                 capture_path: capture_path.to_string(),
                 product_count: detection.products.len(),
@@ -207,11 +221,13 @@ impl Store {
     }
 
     /// Returns the provider product for `(provider_id, provider_product_url)`,
-    /// creating it (with `last_seen_at` set) when it does not exist yet.
+    /// creating it (with `product_name` and `last_seen_at` set) when it does
+    /// not exist yet.
     fn ensure_provider_product(
         &self,
         provider: &ProviderRow,
         provider_product_url: &str,
+        product_name: &str,
     ) -> Result<ProviderProductRow> {
         let filter = format!(
             "provider_id='{}' && provider_product_url='{}'",
@@ -228,21 +244,23 @@ impl Store {
         if let Some(row) = existing.items.into_iter().next() {
             return Ok(row);
         }
-        let now = now_secs();
         let created = self
             .client
             .records(PROVIDER_PRODUCTS_COLLECTION)
             .create(ProviderProductPayload {
                 provider_id: provider.id.clone(),
                 provider_product_url: provider_product_url.to_string(),
-                product_name: String::new(),
-                last_seen_at: now,
+                product_name: product_name.to_string(),
+                last_seen_at: iso8601(now_secs()),
             })
             .call()
             .map_err(|e| anyhow::anyhow!("could not create provider product: {e}"))?;
         Ok(ProviderProductRow { id: created.id })
     }
 
+    /// Inserts a price row only when it differs from the last recorded price
+    /// for this provider product. The first observation is always recorded.
+    /// A row is written when `price` or `currency` changed.
     fn create_price(
         &self,
         provider_product_id: &str,
@@ -250,6 +268,21 @@ impl Store {
         currency: String,
         product: &crate::detect::Product,
     ) -> Result<()> {
+        let last = self
+            .client
+            .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
+            .list()
+            .filter(&format!("provider_product_id='{provider_product_id}'"))
+            .sort("-created")
+            .per_page(1)
+            .call::<PriceRow>()
+            .context("could not look up last price")?;
+        if matches!(
+            last.items.into_iter().next(),
+            Some(row) if row.price == product.price && row.currency == currency
+        ) {
+            return Ok(());
+        }
         self.client
             .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
             .create(ProviderPricePayload {
@@ -334,6 +367,32 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// Formats a unix-seconds timestamp as the ISO-8601 string PocketBase expects
+/// for `date` fields (`YYYY-MM-DD HH:MM:SS.mmmZ`, UTC). The store never sends
+/// raw epoch numbers — PocketBase treats them as blank.
+fn iso8601(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let (y, mo, d) = civil_from_days(days);
+    format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02}:{s:02}.000Z")
+}
+
+/// Gregorian calendar day to (year, month, day) from the Unix epoch in days
+/// (Howard Hinnant's `civil_from_days` algorithm).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 fn host_of(url: &str) -> String {
     url::Url::parse(url)
         .ok()
@@ -357,11 +416,18 @@ mod tests {
     }
 
     #[test]
+    fn iso8601_formats_utc_datetime() {
+        assert_eq!(iso8601(0), "1970-01-01 00:00:00.000Z");
+        assert_eq!(iso8601(1_234_567_890), "2009-02-13 23:31:30.000Z");
+        assert_eq!(iso8601(123456), "1970-01-02 10:17:36.000Z");
+    }
+
+    #[test]
     fn scrape_payload_serializes_detection_fields() {
         let payload = ScrapePayload {
             provider_id: "prov-1".to_string(),
             url: "https://www.parfumerie.com.ar/fragancias".to_string(),
-            scraped_at: 123456,
+            scraped_at: iso8601(123456),
             status: "success".to_string(),
             capture_path: "captures/www.parfumerie.com.ar/capture-123456.json".to_string(),
             product_count: 2,
@@ -370,7 +436,7 @@ mod tests {
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(json["provider_id"], "prov-1");
         assert_eq!(json["url"], "https://www.parfumerie.com.ar/fragancias");
-        assert_eq!(json["scraped_at"], 123456);
+        assert_eq!(json["scraped_at"], "1970-01-02 10:17:36.000Z");
         assert_eq!(json["status"], "success");
         assert_eq!(
             json["capture_path"],
@@ -386,7 +452,7 @@ mod tests {
             provider_id: "prov-1".to_string(),
             provider_product_url: "/a/light-blue-homme-edp-50".to_string(),
             product_name: String::new(),
-            last_seen_at: 123456,
+            last_seen_at: iso8601(123456),
         };
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(json["provider_id"], "prov-1");
@@ -394,7 +460,7 @@ mod tests {
             json["provider_product_url"],
             "/a/light-blue-homme-edp-50"
         );
-        assert_eq!(json["last_seen_at"], 123456);
+        assert_eq!(json["last_seen_at"], "1970-01-02 10:17:36.000Z");
     }
 
     #[test]

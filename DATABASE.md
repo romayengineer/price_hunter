@@ -76,7 +76,7 @@ erDiagram
         int id PK
         int provider_product_id FK "references provider_products.id"
         int scrape_id FK "references scrapes.id"
-        decimal price
+        decimal price "inserted only when price or currency changed"
         varchar currency "e.g. ARS, USD"
         varchar price_text "raw text from HTML"
         datetime created_at UK "unique with provider_product_id"
@@ -194,7 +194,7 @@ Unique: `(provider_product_id, product_id)` prevents duplicate candidate rows; a
 
 ### provider_product_prices
 
-Price observations for a provider product over time.
+Price-change history for a provider product. A row is inserted only when `price` **or** `currency` differs from the last recorded row for that product; the first observation is always recorded. Repeated polls of an unchanged price add no rows.
 
 | Column              | Type      | Notes |
 | ------------------- | --------- | ----- |

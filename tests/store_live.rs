@@ -137,10 +137,29 @@ fn save_round_trips_through_the_api() {
         urls.contains(&"/a/light-blue-homme-edp-50"),
         "provider product should be keyed by its URL, got {urls:?}"
     );
+    let pp_id = products
+        .items
+        .iter()
+        .find(|p| p.provider_product_url == "/a/light-blue-homme-edp-50")
+        .expect("provider product exists")
+        .id
+        .clone();
+
+    let count_prices = || {
+        client
+            .records("provider_product_prices")
+            .list()
+            .filter(&format!("provider_product_id='{pp_id}'"))
+            .call::<PriceRow>()
+            .expect("list prices")
+            .items
+            .len()
+    };
 
     let prices = client
         .records("provider_product_prices")
         .list()
+        .filter(&format!("provider_product_id='{pp_id}'"))
         .call::<PriceRow>()
         .expect("list prices");
     assert!(
@@ -150,6 +169,35 @@ fn save_round_trips_through_the_api() {
             .any(|p| p.price == 242100.0 && p.currency == "ARS" && p.price_text == "242.100"),
         "price with detected currency should land, got {:?}",
         prices.items
+    );
+    assert_eq!(count_prices(), 1, "first save records one price per product");
+
+    store
+        .save(url, 123457, &capture_path, &sample_detection())
+        .expect("save unchanged");
+    assert_eq!(
+        count_prices(),
+        1,
+        "an unchanged price must not insert another row"
+    );
+
+    let mut changed = sample_detection();
+    changed.products[0].price = 250000.0;
+    changed.products[0].price_text = "250.000".to_string();
+    store
+        .save(url, 123458, &capture_path, &changed)
+        .expect("save changed");
+    assert_eq!(count_prices(), 2, "a price change inserts a new row");
+
+    let mut currency_changed = sample_detection();
+    currency_changed.products[0].currency = Some("USD".to_string());
+    store
+        .save(url, 123459, &capture_path, &currency_changed)
+        .expect("save currency changed");
+    assert_eq!(
+        count_prices(),
+        3,
+        "a currency change with the same price inserts a new row"
     );
 
     let images = client

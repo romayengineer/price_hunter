@@ -43,6 +43,9 @@ migrate(
       createRule: null,
       updateRule: null,
       deleteRule: null,
+      indexes: [
+        "CREATE UNIQUE INDEX idx_products_brand_name_size ON products (COALESCE(brand, ''), name, COALESCE(size, ''))",
+      ],
       fields: [
         { name: "brand", type: "text" },
         { name: "name", type: "text", required: true },
@@ -131,7 +134,7 @@ migrate(
       updateRule: null,
       deleteRule: null,
       indexes: [
-        "CREATE UNIQUE INDEX idx_provider_product_images_position ON provider_product_images (provider_product_id, position)",
+        "CREATE UNIQUE INDEX idx_provider_product_images_url ON provider_product_images (provider_product_id, url)",
       ],
       fields: [
         {
@@ -142,8 +145,11 @@ migrate(
           required: true,
         },
         { name: "url", type: "text", required: true },
-        { name: "position", type: "number", required: true },
-        { name: "is_primary", type: "bool", required: true },
+        // position/is_primary are NOT required: PocketBase treats the zero
+        // value (position 0, is_primary false) as blank, and both are written
+        // on every image sync.
+        { name: "position", type: "number" },
+        { name: "is_primary", type: "bool" },
         { name: "created", type: "autodate", onCreate: true, onUpdate: false },
         { name: "updated", type: "autodate", onCreate: true, onUpdate: true },
       ],

@@ -264,8 +264,8 @@ impl Store {
             .map(|_| ())
     }
 
-    /// Upserts the product images by display position and removes rows that are
-    /// no longer present. Position 0 is marked as the primary image.
+    /// Upserts the product images keyed by url and removes rows that are no
+    /// longer present. Position 0 is marked as the primary image.
     fn sync_images(&self, provider_product_id: &str, images: &[String]) -> Result<()> {
         let existing = self
             .client
@@ -296,7 +296,7 @@ impl Store {
             position,
             is_primary: position == 0,
         };
-        match existing.iter().find(|row| row.position == position) {
+        match existing.iter().find(|row| row.url == url) {
             Some(row) => self
                 .client
                 .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
@@ -315,8 +315,7 @@ impl Store {
 
     fn remove_stale_images(&self, existing: &[ProductImageRow], images: &[String]) -> Result<()> {
         for row in existing {
-            let still_wanted = images.get(row.position).is_some_and(|u| *u == row.url);
-            if !still_wanted {
+            if !images.contains(&row.url) {
                 self.client
                     .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
                     .destroy(&row.id)

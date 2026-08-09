@@ -162,4 +162,9 @@ fn save_round_trips_through_the_api() {
         "primary image should land, got {:?}",
         images.items
     );
+    assert!(
+        images.items.iter().all(|i| i.url == "https://cdn.example/img/1.jpg"),
+        "image rows should be keyed by url (no duplicates), got {:?}",
+        images.items
+    );
 }

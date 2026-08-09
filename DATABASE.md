@@ -17,9 +17,9 @@ erDiagram
 
     products {
         int id PK
-        varchar brand
-        varchar name
-        varchar size
+        varchar brand UK "unique with name, size"
+        varchar name UK "unique with brand, size"
+        varchar size UK "unique with brand, name"
         varchar category
         boolean active
         datetime created_at
@@ -55,9 +55,11 @@ erDiagram
     provider_product_images {
         int id PK
         int provider_product_id FK "references provider_products.id"
-        varchar url
+        varchar url UK "unique per provider product"
         int position "display order"
         boolean is_primary
+        datetime created_at
+        datetime updated_at
     }
 
     provider_product_matches {
@@ -67,6 +69,7 @@ erDiagram
         decimal score "fuzzy match confidence"
         varchar status "pending, confirmed, rejected"
         datetime created_at
+        datetime updated_at
     }
 
     provider_product_prices {
@@ -117,6 +120,8 @@ Canonical, known products.
 | created_at | datetime | |
 | updated_at | datetime | when the row was last edited |
 
+Unique: `(brand, name, size)` — enforced with `COALESCE` so a missing brand/size still participates in the uniqueness check.
+
 ### scrapes
 
 One poll of a provider page (one `capture-<timestamp>.json` file).
@@ -162,10 +167,12 @@ Images scraped from a provider product's card. Stored as rows (not an array) so 
 | id                  | int      | primary key |
 | provider_product_id | int      | foreign key → `provider_products.id` |
 | url                 | varchar  | image URL |
-| position            | int      | display order; unique per provider product |
+| position            | int      | display order |
 | is_primary          | boolean  | the thumbnail/main image |
+| created_at          | datetime | |
+| updated_at          | datetime | |
 
-Unique: `(provider_product_id, position)`; at most one `is_primary = true` row per provider product.
+Unique: `(provider_product_id, url)` guards against duplicate image rows when a site reuses or reorders the same URL. The store upserts by url (position is just display order). At most one `is_primary = true` row per provider product.
 
 ### provider_product_matches
 
@@ -179,6 +186,7 @@ Fuzzy-match results between a provider product and canonical products. Stores th
 | score               | decimal  | fuzzy match confidence (0–1) |
 | status              | varchar  | `pending`, `confirmed`, `rejected` |
 | created_at          | datetime | |
+| updated_at          | datetime | when the match status was last changed |
 
 When a match is confirmed, `provider_products.product_id` is set to the same `products.id`.
 
@@ -205,6 +213,6 @@ Unique: `(provider_product_id, created_at)` guards against duplicate snapshots w
 The app persists through the PocketBase Record API only (no SQL, no direct DB file access).
 
 - All `FK` markers above are logical references; PocketBase does not enforce foreign keys. Enforced in application code.
-- Unique constraints **are** supported: PocketBase backs collections with SQLite and lets migrations define unique indexes via `$collection->indexes.add(...)`. The `(provider_id, provider_product_url)`, `(provider_product_id, created_at)`, `(provider_product_id, product_id)`, and `(provider_product_id, position)` uniques should be declared there, not only in app code.
+- Unique constraints **are** supported: PocketBase backs collections with SQLite and lets migrations define unique indexes via `$collection->indexes.add(...)`. The `(provider_id, provider_product_url)`, `(provider_product_id, created_at)`, `(provider_product_id, product_id)`, `(provider_product_id, url)`, and `(brand, name, size)` uniques should be declared there, not only in app code.
 - `boolean`/`decimal`/`datetime` in this diagram map to PocketBase's `bool`/`number`/`date` collection field types.
 - If a future migration moves this model to a relational SQL database (Diesel/SQLx), FK constraints become enforceable schema-level `FOREIGN KEY` clauses.

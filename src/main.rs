@@ -6,6 +6,7 @@ use thirtyfour::prelude::*;
 
 use price_hunter::browser;
 use price_hunter::capture;
+use price_hunter::config;
 use price_hunter::detect;
 use price_hunter::detect::{Detection, Product};
 use price_hunter::store::Store;
@@ -34,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn connect_store() -> anyhow::Result<Store> {
+    config::Config::ensure_template();
     let store = Store::connect().context("cannot connect to PocketBase")?;
     println!("Persisting captures to PocketBase via its API");
     Ok(store)

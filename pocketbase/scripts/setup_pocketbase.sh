@@ -6,8 +6,10 @@
 #    accidental project-folder delete never destroys the database:
 #      ${POCKETBASE_DATA_DIR:-~/.local/share/price_hunter/pb_data}
 # 3. Creates (or updates) the superuser that the scraper authenticates with.
-# 4. Starts `pocketbase serve` pointing at the repo migrations (applied on
-#    first start) — captures/products are created automatically.
+# 4. Writes the scraper's config file ($XDG_CONFIG_HOME/price_hunter/config.toml)
+#    with those credentials so `cargo run` just works.
+# 5. Prints how to start `pocketbase serve` (migrations are applied on first
+#    start) — captures/products are created automatically.
 #
 # Usage: bash pocketbase/scripts/setup_pocketbase.sh
 #   POCKETBASE_SUPERUSER_PASSWORD=<pass>  required on a fresh data dir (used to
@@ -43,6 +45,23 @@ fi
 # Create/update the superuser against our data dir (--dir avoids the default
 # ./pb_data-relative lookup that would nest a pb_data/pb_data folder).
 pocketbase superuser upsert "$ADMIN_EMAIL" "$ADMIN_PASSWORD" --dir "$DATA_DIR"
+
+# --- 4. Write the scraper config.toml (XDG config dir) -----------------------
+# The Rust binary reads ~/.config/price_hunter/config.toml (env vars override
+# it). Write it here so the credentials it just created are immediately usable.
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/price_hunter"
+mkdir -p "$CONFIG_DIR"
+umask 077
+cat > "$CONFIG_DIR/config.toml" <<EOF
+# Written by setup_pocketbase.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ).
+
+[pocketbase]
+url = "$BASE_URL"
+email = "$ADMIN_EMAIL"
+password = "$ADMIN_PASSWORD"
+EOF
+chmod 600 "$CONFIG_DIR/config.toml"
+echo "Wrote scraper config to $CONFIG_DIR/config.toml (mode 600)"
 
 echo
 echo "Next steps:"

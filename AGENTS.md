@@ -61,13 +61,37 @@ Supporting heuristics worth knowing:
   `density`, and a `selected` flag. Use it when the wrong container is picked.
 
 Public API (`src/lib.rs` re-exports modules): `browser::{launch, profile_dir}`,
-`capture::write_capture`, `detect::{detect_grid, diagnose_containers,
-Price, Product, Container, Detection, ContainerCandidate}`, `store::{Store}`.
-`Store` is a sync client (`Store::connect()` then `save(url, captured_at,
-capture_path, &Detection)`) that talks to PocketBase over its Record API. The
-connection is **required**: `main` fails fast (`exit 1`, before opening Chrome)
-if PocketBase is unreachable or `POCKETBASE_*` env vars are missing — there is
-no JSON-only fallback.
+`capture::write_capture`, `config::Config`, `detect::{detect_grid,
+diagnose_containers, Price, Product, Container, Detection, ContainerCandidate}`,
+`store::{Store}`. `Store` is a sync client (`Store::connect()` then `save(url,
+captured_at, capture_path, &Detection)`) that talks to PocketBase over its Record
+API. The connection is **required**: `main` fails fast (`exit 1`, before opening
+Chrome) if PocketBase is unreachable or no password is configured — there is no
+JSON-only fallback.
+
+## Configuration (`src/config.rs`)
+Runtime settings live in a TOML file in the XDG config dir:
+`$XDG_CONFIG_HOME/price_hunter/config.toml` (default
+`~/.config/price_hunter/config.toml`).
+
+```toml
+[pocketbase]
+url = "http://127.0.0.1:8090"
+email = "admin@pricehunter.local"
+password = "change-me"          # required; first run writes a commented template
+```
+
+- Precedence: `POCKETBASE_URL` / `POCKETBASE_SUPERUSER_EMAIL` /
+  `POCKETBASE_SUPERUSER_PASSWORD` env vars **override** the file, which
+  overrides the built-in defaults.
+- `Config::ensure_template()` writes a commented template on first `cargo run`
+  (mode 600) and `setup_pocketbase.sh` writes the real file after it creates
+  the superuser. Treat the file as a secret: it holds the superuser password.
+- `Config::load()` returns defaults for a missing file and errors on a malformed
+  one. Keep the `[pocketbase]` section name stable — `Store::connect()` depends
+  on it.
+- `POCKETBASE_DATA_DIR` is **not** in config.toml: the shell scripts need it
+  before Rust runs, so it stays an env var.
 
 ## Toolchain
 - Pinned to `stable` via `rust-toolchain.toml` (rustup auto-uses it).
@@ -85,9 +109,10 @@ no JSON-only fallback.
 - `bash pocketbase/scripts/run_pocketbase.sh` starts the PocketBase server
   (data dir outside the repo, repo-relative migrations dir).
 - `cargo run` opens Chrome and keeps it open until the window is closed or Ctrl+C.
-  It connects to PocketBase **first** and exits with an error if it can't (set
-  `POCKETBASE_SUPERUSER_PASSWORD` in the shell, e.g. `export
-  POCKETBASE_SUPERUSER_PASSWORD=pricehunter-dev`).
+  It connects to PocketBase **first** and exits with an error if it can't. Run
+  `bash pocketbase/scripts/setup_pocketbase.sh` once (writes
+  `~/.config/price_hunter/config.toml`), or edit that file / export
+  `POCKETBASE_SUPERUSER_PASSWORD` manually.
 - Optional URL arg: `cargo run -- https://example.com`. Failed navigation warns
   but keeps the session alive.
 - Captures are automatic: as soon as a grid is detected on the current page the

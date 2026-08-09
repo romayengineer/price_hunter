@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+dirs = "6"
 ego-tree = "0.11"
 pocketbase-sdk = { git = "https://github.com/sreedevk/pocketbase-sdk-rust", tag = "0.4.0" }
 scraper = "0.27"
@@ -16,6 +17,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thirtyfour = "0.37"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+toml = "0.8"
 url = "2"
 
 [dev-dependencies]

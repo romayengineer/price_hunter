@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::detect::Detection;
 
-const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8090";
 const PROVIDERS_COLLECTION: &str = "providers";
 const SCRAPES_COLLECTION: &str = "scrapes";
 const PROVIDER_PRODUCTS_COLLECTION: &str = "provider_products";
@@ -111,16 +110,21 @@ pub struct Store {
 impl Store {
     /// Authenticates against a running PocketBase instance.
     ///
-    /// Reads `POCKETBASE_URL` (default `http://127.0.0.1:8090`),
-    /// `POCKETBASE_SUPERUSER_EMAIL` (default `admin@pricehunter.local`) and
-    /// `POCKETBASE_SUPERUSER_PASSWORD` (required).
+    /// Settings come from `~/.config/price_hunter/config.toml` (see
+    /// `config::Config`) with `POCKETBASE_URL`, `POCKETBASE_SUPERUSER_EMAIL`
+    /// and `POCKETBASE_SUPERUSER_PASSWORD` env vars overriding the file. The
+    /// password is required (file or env).
     pub fn connect() -> Result<Self> {
-        let base_url =
-            std::env::var("POCKETBASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
-        let email = std::env::var("POCKETBASE_SUPERUSER_EMAIL")
-            .unwrap_or_else(|_| "admin@pricehunter.local".to_string());
-        let password = std::env::var("POCKETBASE_SUPERUSER_PASSWORD")
-            .context("POCKETBASE_SUPERUSER_PASSWORD is not set")?;
+        let config = crate::config::Config::load()?.with_env();
+        let password = config.password().map(str::to_owned).with_context(|| {
+            format!(
+                "no PocketBase password configured — set the password in {} or export \
+                 POCKETBASE_SUPERUSER_PASSWORD",
+                crate::config::Config::path().display()
+            )
+        })?;
+        let base_url = config.pocketbase.url;
+        let email = config.pocketbase.email;
         let client = Client::new(&base_url)
             .superusers()
             .auth_with_password(&email, &password)

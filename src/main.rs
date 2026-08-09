@@ -33,18 +33,17 @@ async fn main() -> WebDriverResult<()> {
 }
 
 fn connect_store() -> Option<Store> {
-    let default = "traildepot/data/main.db";
-    let path = env::var("PRICE_HUNTER_DB").unwrap_or_else(|_| default.to_string());
-    match store::Store::open(&path) {
+    match store::Store::connect() {
         Ok(store) => {
-            println!("Persisting captures to {path} (TrailBase serves this DB)");
+            println!("Persisting captures to PocketBase via its API");
             Some(store)
         }
         Err(e) => {
             eprintln!(
-                "Could not open {path}: {e}\n\
-                 Start TrailBase first (see trailbase/scripts/setup_trailbase.sh) or set \
-                 PRICE_HUNTER_DB. Captures will be written to JSON only."
+                "Could not connect to PocketBase: {e}\n\
+                 Start PocketBase first (see pocketbase/scripts/setup_pocketbase.sh) or set \
+                 POCKETBASE_URL / POCKETBASE_SUPERUSER_PASSWORD. \
+                 Captures will be written to JSON only."
             );
             None
         }

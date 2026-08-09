@@ -1,5 +1,7 @@
 captures
 
+.#*
+
 /draft
 
 # Added by cargo
@@ -8,5 +10,5 @@ captures
 
 profiles
 
-# TrailBase runtime depot (databases, secrets, generated config)
-**/traildepot/
+# PocketBase runtime data lives OUTSIDE the repo (~/.local/share/price_hunter)
+# so a fresh clone / project deletion never loses the database.

@@ -53,35 +53,43 @@ cargo run -- https://www.beauty24.com.ar/perfumes-y-fragancias
 Captures are written to `captures/<domain>/capture-<timestamp>.json`, organized
 by site hostname. A new timestamped file is written whenever the detected
 products (prices or names) change on a later poll. The same captures are also
-persisted to the SQLite database TrailBase serves (`traildepot/data/main.db`,
-override with `PRICE_HUNTER_DB`).
+persisted to a [PocketBase](https://pocketbase.io) instance **through its HTTP
+API only** — the scraper never writes SQL and never touches the database file
+directly.
 
-### TrailBase
+### PocketBase
 
-Price Hunter persists every capture to a SQLite database exposed through
-[TrailBase](https://trailbase.io) — a self-hosted, single-executable backend
-with an admin dashboard and type-safe Record APIs. TrailBase is not required to
-run the scraper (it always writes JSON); it's the retrieval layer for the app.
+Price Hunter persists every capture to PocketBase — a self-hosted,
+single-executable backend with an admin dashboard and a Record API. PocketBase
+is not required to run the scraper (it always writes JSON); it's the retrieval
+layer for the app.
+
+The PocketBase data directory lives **outside the repo** at
+`~/.local/share/price_hunter/pb_data` (override with `POCKETBASE_DATA_DIR`), so
+a fresh clone or an accidental project-folder delete never loses the database.
 
 Setup:
 
 ```sh
-bash trailbase/scripts/setup_trailbase.sh   # installs `trail`, seeds traildepot/
-trail run                                    # serves http://localhost:4000
+POCKETBASE_SUPERUSER_PASSWORD='<password>' \
+  bash pocketbase/scripts/setup_pocketbase.sh   # creates superuser + data dir
+
+# Start the server (migrations apply on first start, creating the collections):
+pocketbase serve \
+  --dir ~/.local/share/price_hunter/pb_data \
+  --migrationsDir pocketbase/migrations
 ```
 
-- Admin dashboard (browse captures/products): `http://localhost:4000/_/admin/`
-  — credentials are printed on the first `trail run`.
-- Captures API: `http://localhost:4000/api/records/v1/captures`
-- Products API: `http://localhost:4000/api/records/v1/products`
+- Admin dashboard (browse captures/products): `http://127.0.0.1:8090/_/`
+  — log in with the superuser (`admin@pricehunter.local` by default).
+- Captures API: `http://127.0.0.1:8090/api/collections/captures/records`
+- Products API: `http://127.0.0.1:8090/api/collections/products/records`
 
-The scraper writes directly to `traildepot/data/main.db` (the same file
-TrailBase serves), so no app user is needed — the Record APIs are world-readable
-and any writes go straight to the database file.
-
-The schema lives in `trailbase/migrations/` and the Record API config in
-`trailbase/config.textproto`. The runtime depot (`traildepot/`) is gitignored;
-re-run the setup script on a fresh checkout to recreate it.
+The scraper authenticates as the superuser (env: `POCKETBASE_URL`,
+`POCKETBASE_SUPERUSER_EMAIL`, `POCKETBASE_SUPERUSER_PASSWORD`) and writes
+through the Record API; the collections are world-readable so other apps can
+query prices without a token. The schema lives in `pocketbase/migrations/`
+(JS migrations — no SQL) and is applied automatically on `serve`.
 
 ```json
 {
@@ -99,8 +107,9 @@ re-run the setup script on a fresh checkout to recreate it.
 }
 ```
 
-The same data lands in the `captures` and `products` SQLite tables (host,
-captured_at, container metadata, and one row per product with name/price).
+The same data lands in the `captures` and `products` PocketBase collections
+(url, host, captured_at, container metadata, and one product record per product
+with name/price, linked to its capture).
 
 ## Tests
 
@@ -116,6 +125,15 @@ compreahora, a logged-in session in `profiles/chrome`):
 cargo test --test compreahora_live -- --ignored
 cargo test --test fabilu -- --ignored
 cargo test --test beauty24 -- --ignored
+```
+
+The store live test requires a running PocketBase with the collections created
+(it round-trips through the API only — no SQL):
+
+```sh
+# Start PocketBase first, then:
+POCKETBASE_SUPERUSER_PASSWORD='<password>' \
+  cargo test --test store_live -- --ignored
 ```
 
 Set `PRICE_HUNTER_DUMP_HTML=1` when running the compreahora live test to save

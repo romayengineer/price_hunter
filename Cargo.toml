@@ -8,8 +8,9 @@ name = "pricehunter"
 path = "src/main.rs"
 
 [dependencies]
+anyhow = "1"
 ego-tree = "0.11"
-rusqlite = { version = "0.40", features = ["bundled"] }
+pocketbase-sdk = { git = "https://github.com/sreedevk/pocketbase-sdk-rust", tag = "0.4.0" }
 scraper = "0.27"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

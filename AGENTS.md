@@ -9,13 +9,13 @@ arbitrary e-commerce HTML and captures them as JSON. Uses `thirtyfour`
   heart of the project).
 - `src/browser.rs` — launches Chrome via a persistent profile.
 - `src/capture.rs` — writes JSON captures under `captures/<host>/`.
-- `src/store.rs` — persists captures + products to a SQLite database
-  (`traildepot/data/main.db` by default — the same DB TrailBase serves; override
-  with `PRICE_HUNTER_DB`) using `rusqlite` (bundled). Mirrors the
-  `captures`/`products` schema in `trailbase/migrations/`.
+- `src/store.rs` — persists captures + products to a running PocketBase via its
+  Record API using the `pocketbase-sdk` crate (async HTTP, no SQL, no DB file
+  access). Mirrors the `captures`/`products` collections in
+  `pocketbase/migrations/`.
 - `src/main.rs` — `cargo run`: opens a real, user-controlled browser and polls
   it for captures in the background.
-- `trailbase/` — TrailBase config + migrations + `scripts/setup_trailbase.sh`
+- `pocketbase/` — PocketBase migrations (JS, no SQL) + `scripts/setup_pocketbase.sh`
   for the retrieval/app layer (admin dashboard + Record APIs). Not required to
   run the scraper.
 - `tests/` — fixture-based integration tests (offline), live browser tests
@@ -61,6 +61,9 @@ Supporting heuristics worth knowing:
 Public API (`src/lib.rs` re-exports modules): `browser::{launch, profile_dir}`,
 `capture::write_capture`, `detect::{detect_grid, diagnose_containers,
 Price, Product, Container, Detection, ContainerCandidate}`, `store::{Store}`.
+`Store` is a sync client (`Store::connect()` then `save(url, captured_at,
+&Detection)`) that talks to PocketBase over its Record API; it returns `None`
+from `main`'s `connect_store()` if PocketBase is down, leaving JSON-only mode.
 
 ## Toolchain
 - Pinned to `stable` via `rust-toolchain.toml` (rustup auto-uses it).
@@ -82,10 +85,10 @@ Price, Product, Container, Detection, ContainerCandidate}`, `store::{Store}`.
   products are written to `captures/<domain>/capture-<timestamp>.json` (organized
   by site hostname), and a new timestamped file is written again whenever the
   detected products (prices or names) change on a later poll. Each capture is
-  also persisted to the SQLite store (`traildepot/data/main.db` by default —
-  the same DB TrailBase serves; override with `PRICE_HUNTER_DB`), which
-  TrailBase exposes via Record APIs. Store failures are logged and never crash
-  the browser session.
+  also persisted to PocketBase through its HTTP API only (env:
+  `POCKETBASE_URL`, `POCKETBASE_SUPERUSER_EMAIL`,
+  `POCKETBASE_SUPERUSER_PASSWORD`), which serves the Record APIs. Store failures
+  are logged and never crash the browser session.
 
 ## Tests
 - `cargo test` runs the fixture-based detection tests (no network/browser needed)
@@ -105,6 +108,10 @@ Price, Product, Container, Detection, ContainerCandidate}`, `store::{Store}`.
   - `cargo test --test parfumerie_live -- --ignored` opens Chrome, visits the
     `/fragancias` category, scrolls to trigger infinite scroll, and asserts at
     least 10 products with names + prices.
+  - `cargo test --test store_live -- --ignored` requires a running PocketBase
+    (see `pocketbase/scripts/setup_pocketbase.sh`) and round-trips a capture +
+    products through the Record API only — verifies the store works without any
+    SQL or DB-file access.
 - Diagnostic tools (keep these; they are no-ops without their env var):
   - `PRICE_HUNTER_PROBE_FIXTURE=<path> cargo test --test probe -- --nocapture`
     dumps the full `Detection` (container + products) for any HTML file.
@@ -143,14 +150,19 @@ Known markup classes the detector already handles: PrestaShop
 
 ## Gotchas
 - `captures/` is gitignored — write capture output there; do not expect it committed.
-- Known upstream bugs are tracked in `BUGS.md` (e.g. `trail user add` failing on
-  a version skew) — check it before debugging TrailBase CLI issues.
-- `traildepot/` (TrailBase runtime: DBs, secrets, generated config) is
-  gitignored; the checked-in source of truth is `trailbase/migrations/` +
-  `trailbase/config.textproto`. Re-run `trailbase/scripts/setup_trailbase.sh`
-  on a fresh checkout.
-- The SQLite store schema in `src/store.rs` must stay in sync with
-  `trailbase/migrations/` — when you change one, change both.
+- Known upstream bugs are tracked in `BUGS.md` — check it before debugging
+  backend tooling issues.
+- PocketBase data lives OUTSIDE the repo at
+  `~/.local/share/price_hunter/pb_data` (override with `POCKETBASE_DATA_DIR`) so
+  a fresh clone or an accidental project-folder delete never loses the
+  database. The checked-in source of truth is `pocketbase/migrations/` (JS, no
+  SQL) + `pocketbase/scripts/setup_pocketbase.sh`. Re-run the setup script on a
+  fresh checkout.
+- **Never write SQL and never touch the database file directly** — the scraper
+  persists ONLY through the PocketBase Record API (authenticated as superuser).
+  Schema changes go in a NEW `pocketbase/migrations/<ts>_<name>.js` file
+  (applied automatically on the next `pocketbase serve`); do not use `sqlite3`
+  on the PocketBase data file.
 - Do not `driver.quit()`/drop early while the user is driving the browser; keep
   the `WebDriver` alive until the browser window closes (probe with
   `driver.current_url()`).

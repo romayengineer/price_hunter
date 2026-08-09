@@ -94,7 +94,11 @@ struct ProviderProductRow {
 #[allow(dead_code)]
 struct ProductRow {
     id: String,
+    #[serde(default)]
+    brand: String,
     name: String,
+    #[serde(default)]
+    size: String,
 }
 
 /// Payload for updating `provider_products.product_id`. A `None` value
@@ -558,7 +562,7 @@ impl Store {
                 .iter()
                 .map(|p| crate::matching::Product {
                     id: p.id.clone(),
-                    name: p.name.clone(),
+                    full_name: crate::matching::full_name(&p.brand, &p.name, &p.size),
                 })
                 .collect::<Vec<_>>(),
         );

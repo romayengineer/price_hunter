@@ -14,7 +14,19 @@ pub struct ProviderProduct {
 /// A canonical product from the `products` collection.
 pub struct Product {
     pub id: String,
-    pub name: String,
+    pub full_name: String,
+}
+
+/// Joins brand, name and size into one comparison string, skipping empties.
+/// The parts are space-separated so the token-based normalization in
+/// `similarity` treats them as one order-insensitive bag of tokens.
+pub fn full_name(brand: &str, name: &str, size: &str) -> String {
+    [brand, name, size]
+        .into_iter()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// One scored (provider product, canonical product) comparison.
@@ -55,7 +67,7 @@ pub fn above_threshold(
         .iter()
         .flat_map(|pp| {
             products.iter().filter_map(|product| {
-                let score = similarity(&pp.name, &product.name);
+                let score = similarity(&pp.name, &product.full_name);
                 (score >= MIN_SCORE).then(|| MatchCandidate {
                     provider_product_id: pp.id.clone(),
                     product_id: product.id.clone(),
@@ -131,10 +143,42 @@ mod tests {
                 ProviderProduct { id: "pp2".into(), name: "totally unrelated".into() },
             ],
             vec![
-                Product { id: "p1".into(), name: "EDP 50 Light Blue Homme".into() },
-                Product { id: "p2".into(), name: "Rose Spicy EDP".into() },
+                Product { id: "p1".into(), full_name: "EDP 50 Light Blue Homme".into() },
+                Product { id: "p2".into(), full_name: "Rose Spicy EDP".into() },
             ],
         )
+    }
+
+    #[test]
+    fn full_name_joins_brand_name_and_size() {
+        assert_eq!(
+            full_name("yves saint laurent", "y l'elixir edp", "60 ml"),
+            "yves saint laurent y l'elixir edp 60 ml"
+        );
+    }
+
+    #[test]
+    fn full_name_skips_missing_parts() {
+        assert_eq!(full_name("diesel", "fuel for life edt", ""), "diesel fuel for life edt");
+        assert_eq!(full_name("", "adn neroli ecstasy", ""), "adn neroli ecstasy");
+    }
+
+    #[test]
+    fn full_name_trims_whitespace_parts() {
+        assert_eq!(full_name("  ", "  a  ", "   "), "a");
+    }
+
+    #[test]
+    fn full_name_improves_score_vs_name_only() {
+        let brand_name_score = similarity(
+            "EDT Diesel Fuel For Life x 125 ml",
+            &full_name("diesel", "fuel for life edt", "125 ml"),
+        );
+        let name_only_score = similarity("EDT Diesel Fuel For Life x 125 ml", "fuel for life edt");
+        assert!(
+            brand_name_score > name_only_score,
+            "including brand+size should score higher, got {brand_name_score} vs {name_only_score}"
+        );
     }
 
     #[test]

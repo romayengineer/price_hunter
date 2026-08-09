@@ -12,7 +12,7 @@ arbitrary e-commerce HTML and captures them as JSON. Uses `thirtyfour`
 - `src/store.rs` — persists detections to a running PocketBase via its Record
   API using the `pocketbase-sdk` crate (async HTTP, no SQL, no DB file access).
   Writes the normalized schema (`providers`, `scrapes`, `provider_products`,
-  `product_images`, `provider_prices`) defined in `DATABASE.md` and mirrored in
+  `provider_product_images`, `provider_prices`) defined in `DATABASE.md` and mirrored in
   `pocketbase/migrations/`.
 - `src/main.rs` — `cargo run`: opens a real, user-controlled browser and polls
   it for captures in the background.

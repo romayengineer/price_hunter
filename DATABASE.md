@@ -52,7 +52,7 @@ erDiagram
         datetime created_at
     }
 
-    product_images {
+    provider_product_images {
         int id PK
         int provider_product_id FK "references provider_products.id"
         varchar url
@@ -84,7 +84,7 @@ erDiagram
     products o|--o{ provider_products : "matched to"
     provider_products ||--o{ product_matches : "has candidates"
     products o|--o{ product_matches : "suggested as"
-    provider_products ||--o{ product_images : "shows"
+    provider_products ||--o{ provider_product_images : "shows"
     scrapes ||--o{ provider_prices : "observed in"
     provider_products ||--o{ provider_prices : "has prices at"
 ```
@@ -153,7 +153,7 @@ A product as listed on a specific provider's site. `product_name` is extracted f
 
 Unique: `(provider_id, provider_product_url)`. For matched rows, `product_id` is unique per provider product.
 
-### product_images
+### provider_product_images
 
 Images scraped from a provider product's card. Stored as rows (not an array) so each image can carry display order and primary status.
 

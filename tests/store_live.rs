@@ -84,7 +84,7 @@ fn env_password() -> String {
 
 /// Round-trips a detection through the PocketBase Record API against the
 /// normalized schema (providers, scrapes, provider_products, provider_prices,
-/// product_images) and verifies the rows land. Requires a running PocketBase
+/// provider_product_images) and verifies the rows land. Requires a running PocketBase
 /// (`pocketbase serve --dir ... --migrationsDir pocketbase/migrations`).
 #[test]
 #[ignore = "requires a running PocketBase instance"]
@@ -153,7 +153,7 @@ fn save_round_trips_through_the_api() {
     );
 
     let images = client
-        .records("product_images")
+        .records("provider_product_images")
         .list()
         .call::<ImageRow>()
         .expect("list product images");

@@ -8,7 +8,7 @@ const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8090";
 const PROVIDERS_COLLECTION: &str = "providers";
 const SCRAPES_COLLECTION: &str = "scrapes";
 const PROVIDER_PRODUCTS_COLLECTION: &str = "provider_products";
-const PRODUCT_IMAGES_COLLECTION: &str = "product_images";
+const PROVIDER_PRODUCT_IMAGES_COLLECTION: &str = "provider_product_images";
 const PROVIDER_PRICES_COLLECTION: &str = "provider_prices";
 
 /// Payload for the `providers` collection.
@@ -62,7 +62,7 @@ struct ProviderProductRow {
     id: String,
 }
 
-/// Payload for the `product_images` collection.
+/// Payload for the `provider_product_images` collection.
 #[derive(Serialize, Clone)]
 struct ProductImagePayload {
     provider_product_id: String,
@@ -89,7 +89,7 @@ struct ProviderPricePayload {
 
 /// Persists detections to a running PocketBase through its Record API using the
 /// normalized schema documented in DATABASE.md (providers, scrapes,
-/// provider_products, product_images, provider_prices).
+/// provider_products, provider_product_images, provider_prices).
 ///
 /// The scraper NEVER writes SQL or touches the database file directly — all
 /// writes go through the PocketBase HTTP API as an authenticated superuser
@@ -123,7 +123,7 @@ impl Store {
     /// Persists one detection through the Record API:
     /// one `scrapes` record, then per detected product one `provider_products`
     /// (upserted by `(provider_id, provider_product_url)`), one
-    /// `provider_prices` record and its `product_images` rows.
+    /// `provider_prices` record and its `provider_product_images` rows.
     pub fn save(
         &self,
         url: &str,
@@ -269,7 +269,7 @@ impl Store {
     fn sync_images(&self, provider_product_id: &str, images: &[String]) -> Result<()> {
         let existing = self
             .client
-            .records(PRODUCT_IMAGES_COLLECTION)
+            .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
             .list()
             .filter(&format!("provider_product_id='{provider_product_id}'"))
             .per_page(100)
@@ -299,13 +299,13 @@ impl Store {
         match existing.iter().find(|row| row.position == position) {
             Some(row) => self
                 .client
-                .records(PRODUCT_IMAGES_COLLECTION)
+                .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
                 .update(&row.id, payload)
                 .call()
                 .map(|_| ()),
             None => self
                 .client
-                .records(PRODUCT_IMAGES_COLLECTION)
+                .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
                 .create(payload)
                 .call()
                 .map(|_| ()),
@@ -318,7 +318,7 @@ impl Store {
             let still_wanted = images.get(row.position).is_some_and(|u| *u == row.url);
             if !still_wanted {
                 self.client
-                    .records(PRODUCT_IMAGES_COLLECTION)
+                    .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
                     .destroy(&row.id)
                     .call()
                     .map_err(|e| anyhow::anyhow!("could not delete stale product image: {e}"))?;

@@ -48,6 +48,7 @@ migrate(
       ],
       fields: [
         { name: "brand", type: "text" },
+        { name: "product_name", type: "text" },
         { name: "name", type: "text", required: true },
         { name: "size", type: "text" },
         { name: "category", type: "text" },

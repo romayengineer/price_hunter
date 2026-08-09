@@ -17,9 +17,10 @@ erDiagram
 
     products {
         int id PK
-        varchar brand UK "unique with name, size"
-        varchar name UK "unique with brand, size"
-        varchar size UK "unique with brand, name"
+        varchar brand UK "unique with product_name, size"
+        varchar product_name UK "unique with brand, size"
+        varchar name "full display name = brand + product_name + size"
+        varchar size UK "unique with brand, product_name"
         varchar category
         boolean active
         datetime created_at
@@ -109,18 +110,24 @@ erDiagram
 
 Canonical, known products.
 
-| Column     | Type     | Notes |
-| ---------- | -------- | ----- |
-| id         | int      | primary key |
-| brand      | varchar  | |
-| name       | varchar  | |
-| size       | varchar  | |
-| category   | varchar  | optional; improves fuzzy matching |
-| active     | boolean  | `false` when retired; not eligible for new matches |
-| created_at | datetime | |
-| updated_at | datetime | when the row was last edited |
+| Column       | Type     | Notes |
+| ------------ | -------- | ----- |
+| id           | int      | primary key |
+| brand        | varchar  | duplicated into `name` for display |
+| product_name | varchar  | raw product name; unique per brand+size |
+| name         | varchar  | full display name = brand + product_name + size |
+| size         | varchar  | duplicated into `name` for display |
+| category     | varchar  | optional; improves fuzzy matching |
+| active       | boolean  | `false` when retired; not eligible for new matches |
+| created_at   | datetime | |
+| updated_at   | datetime | when the row was last edited |
 
-Unique: `(brand, name, size)` — enforced with `COALESCE` so a missing brand/size still participates in the uniqueness check.
+`name` is the full display name (brand + product_name + size joined); `brand`,
+`product_name` and `size` are kept as separate columns even though `name`
+duplicates them. The fuzzy matcher compares `provider_products.name` against
+`products.name`.
+
+Unique: `(brand, product_name, size)` — enforced with `COALESCE` so a missing brand/size still participates in the uniqueness check.
 
 ### scrapes
 

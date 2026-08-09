@@ -17,6 +17,7 @@ const PROVIDER_PRODUCT_PRICES_COLLECTION: &str = "provider_product_prices";
 #[derive(Serialize, Clone)]
 struct ProductImportPayload {
     brand: String,
+    product_name: String,
     name: String,
     size: String,
     category: String,
@@ -89,16 +90,13 @@ struct ProviderProductRow {
     product_id: Option<String>,
 }
 
-/// A canonical product used by the fuzzy matcher.
+/// A canonical product used by the fuzzy matcher. `name` already holds the
+/// full display name (brand + product_name + size).
 #[derive(Default, Deserialize, Debug)]
 #[allow(dead_code)]
 struct ProductRow {
     id: String,
-    #[serde(default)]
-    brand: String,
     name: String,
-    #[serde(default)]
-    size: String,
 }
 
 /// Payload for updating `provider_products.product_id`. A `None` value
@@ -267,22 +265,28 @@ impl Store {
     }
 
     /// Imports one CSV row into `products`, returning whether it was created
-    /// or skipped as a duplicate.
+    /// or skipped as a duplicate. `product_name` keeps the raw CSV name while
+    /// `name` holds the full display name (brand + product_name + size).
     fn import_csv_row(&self, record: &csv::StringRecord) -> Result<RowOutcome> {
         let brand = record.get(0).unwrap_or_default().trim().to_string();
-        let name = record.get(1).unwrap_or_default().trim().to_string();
+        let product_name = record.get(1).unwrap_or_default().trim().to_string();
         let size = record.get(2).unwrap_or_default().trim().to_string();
-        if name.is_empty() {
+        if product_name.is_empty() {
             return Ok(RowOutcome::Skipped);
         }
-        if self.find_product(&brand, &name, &size)?.is_some() {
+        if self
+            .find_product(&brand, &product_name, &size)?
+            .is_some()
+        {
             return Ok(RowOutcome::Skipped);
         }
+        let full_name = crate::matching::full_name(&brand, &product_name, &size);
         self.client
             .records(PRODUCTS_COLLECTION)
             .create(ProductImportPayload {
                 brand,
-                name,
+                product_name,
+                name: full_name,
                 size,
                 category: String::new(),
                 active: true,
@@ -292,12 +296,17 @@ impl Store {
             .map(|_| RowOutcome::Created)
     }
 
-    /// Returns the existing canonical product for `(brand, name, size)`.
-    fn find_product(&self, brand: &str, name: &str, size: &str) -> Result<Option<ProductImportRow>> {
+    /// Returns the existing canonical product for `(brand, product_name, size)`.
+    fn find_product(
+        &self,
+        brand: &str,
+        product_name: &str,
+        size: &str,
+    ) -> Result<Option<ProductImportRow>> {
         let filter = format!(
-            "brand='{}' && name='{}' && size='{}'",
+            "brand='{}' && product_name='{}' && size='{}'",
             escape_filter(brand),
-            escape_filter(name),
+            escape_filter(product_name),
             escape_filter(size)
         );
         let existing = self
@@ -562,7 +571,7 @@ impl Store {
                 .iter()
                 .map(|p| crate::matching::Product {
                     id: p.id.clone(),
-                    full_name: crate::matching::full_name(&p.brand, &p.name, &p.size),
+                    full_name: p.name.clone(),
                 })
                 .collect::<Vec<_>>(),
         );
@@ -957,14 +966,16 @@ mod tests {
     fn product_import_payload_serializes_csv_columns_and_active() {
         let payload = ProductImportPayload {
             brand: "adolfo dominguez".to_string(),
-            name: "adn neroli ecstasy".to_string(),
+            product_name: "adn neroli ecstasy".to_string(),
+            name: "adolfo dominguez adn neroli ecstasy 100 ml".to_string(),
             size: "100 ml".to_string(),
             category: String::new(),
             active: true,
         };
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(json["brand"], "adolfo dominguez");
-        assert_eq!(json["name"], "adn neroli ecstasy");
+        assert_eq!(json["product_name"], "adn neroli ecstasy");
+        assert_eq!(json["name"], "adolfo dominguez adn neroli ecstasy 100 ml");
         assert_eq!(json["size"], "100 ml");
         assert_eq!(json["category"], "");
         assert_eq!(json["active"], true);

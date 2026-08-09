@@ -32,6 +32,8 @@ erDiagram
         datetime scraped_at
         varchar status "success, failed, empty"
         varchar capture_path "captures/<domain>/capture-<ts>.json"
+        int product_count "detected cards"
+        varchar container_class "grid container class"
     }
 
     provider_products {
@@ -41,6 +43,9 @@ erDiagram
         varchar sku "provider's own product id"
         varchar gtin_ean "optional barcode"
         varchar product_name "name extracted from HTML"
+        varchar provider_brand "brand as scraped"
+        varchar provider_size "size as scraped"
+        varchar image_url "product image from card"
         varchar availability "in_stock, out_of_stock, ..."
         int product_id FK, UK "nullable, confirmed link to products.id"
         datetime last_seen_at
@@ -114,6 +119,8 @@ One poll of a provider page (one `capture-<timestamp>.json` file).
 | scraped_at    | datetime | when the poll happened |
 | status        | varchar  | `success`, `failed`, `empty` |
 | capture_path  | varchar  | `captures/<domain>/capture-<ts>.json` |
+| product_count | int      | detected cards in the capture |
+| container_class | varchar | grid container class, e.g. `vtex-search-result-3-x-gallery` |
 
 ### provider_products
 
@@ -127,6 +134,9 @@ A product as listed on a specific provider's site. `product_name` is extracted f
 | sku                   | varchar  | provider's own product id, when present |
 | gtin_ean              | varchar  | optional barcode, when present |
 | product_name          | varchar  | name extracted from HTML |
+| provider_brand        | varchar  | brand as scraped |
+| provider_size         | varchar  | size as scraped |
+| image_url             | varchar  | product image from the card; aids match review |
 | availability          | varchar  | e.g. `in_stock`, `out_of_stock` |
 | product_id            | int      | nullable; confirmed foreign key → `products.id` |
 | last_seen_at          | datetime | last poll that observed this listing |
@@ -149,6 +159,8 @@ Fuzzy-match results between a provider product and canonical products. Stores th
 
 When a match is confirmed, `provider_products.product_id` is set to the same `products.id`.
 
+Unique: `(provider_product_id, product_id)` prevents duplicate candidate rows; at most one `confirmed` row per provider product.
+
 ### provider_prices
 
 Price observations for a provider product over time.
@@ -167,9 +179,9 @@ Unique: `(provider_product_id, created_at)` guards against duplicate snapshots w
 
 ## Implementation notes
 
-The app persists through the PocketBase Record API only (no SQL, no direct DB file access). PocketBase collections do **not** enforce foreign keys or composite unique constraints:
+The app persists through the PocketBase Record API only (no SQL, no direct DB file access).
 
-- All `FK` markers above are logical references, enforced in application code.
-- Dedup on `(provider_id, provider_product_url)` must be handled in app code (e.g. lookup-then-upsert on `provider_product_url`).
-- The `(provider_product_id, created_at)` guard on `provider_prices` is applied in app code before inserting.
-- If a future migration moves this model to a relational SQL database (Diesel/SQLx), these constraints become enforceable schema-level `FOREIGN KEY` / `UNIQUE` clauses.
+- All `FK` markers above are logical references; PocketBase does not enforce foreign keys. Enforced in application code.
+- Unique constraints **are** supported: PocketBase backs collections with SQLite and lets migrations define unique indexes via `$collection->indexes.add(...)`. The `(provider_id, provider_product_url)`, `(provider_product_id, created_at)`, and `(provider_product_id, product_id)` uniques should be declared there, not only in app code.
+- `boolean`/`decimal`/`datetime` in this diagram map to PocketBase's `bool`/`number`/`date` collection field types.
+- If a future migration moves this model to a relational SQL database (Diesel/SQLx), FK constraints become enforceable schema-level `FOREIGN KEY` clauses.

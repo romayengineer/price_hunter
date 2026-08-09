@@ -27,6 +27,14 @@ fn sample_detection() -> Detection {
                 images: Vec::new(),
                 currency: None,
             },
+            Product {
+                name: "A Drop d'Issey EDP Fraîche".to_string(),
+                price_text: "143.000".to_string(),
+                price: 143000.0,
+                url: Some("/c/drop-d-issey-edp-fraiche".to_string()),
+                images: Vec::new(),
+                currency: Some("ARS".to_string()),
+            },
         ],
     }
 }
@@ -53,6 +61,7 @@ struct ScrapeRow {
 struct ProviderProductRow {
     id: String,
     provider_product_url: String,
+    product_name: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -118,8 +127,8 @@ fn save_round_trips_through_the_api() {
         .call::<ScrapeRow>()
         .expect("list scrapes");
     assert!(
-        scrapes.items.iter().any(|s| s.product_count == 2),
-        "scrape should have landed with product_count == 2, got {:?}",
+        scrapes.items.iter().any(|s| s.product_count == 3),
+        "scrape should have landed with product_count == 3, got {:?}",
         scrapes.items
     );
 
@@ -136,6 +145,14 @@ fn save_round_trips_through_the_api() {
     assert!(
         urls.contains(&"/a/light-blue-homme-edp-50"),
         "provider product should be keyed by its URL, got {urls:?}"
+    );
+    assert!(
+        products
+            .items
+            .iter()
+            .any(|p| p.product_name == "A Drop d'Issey EDP Fraîche"),
+        "an apostrophe in the product name must not break persistence, got {:?}",
+        products.items
     );
     let pp_id = products
         .items

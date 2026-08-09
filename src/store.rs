@@ -150,19 +150,36 @@ impl Store {
         let provider = self.ensure_provider(&host)?;
         let scrape = self.create_scrape(url, captured_at, capture_path, &provider.id, detection)?;
         for product in &detection.products {
-            let provider_product = self.ensure_provider_product(
-                &provider,
-                product.url.as_deref().unwrap_or(""),
-                &product.name,
-            )?;
-            let currency = product
-                .currency
-                .clone()
-                .or_else(|| provider.default_currency.clone())
-                .unwrap_or_default();
-            self.create_price(&provider_product.id, &scrape.id, currency, product)?;
-            self.sync_images(&provider_product.id, &product.images)?;
+            // A single bad product must not drop the rest of the capture: log
+            // and move on so the other products still land (the scrape row is
+            // already written).
+            if let Err(e) = self.save_product(&provider, &scrape.id, product) {
+                eprintln!("could not persist product {:?}: {e:#}", product.name);
+            }
         }
+        Ok(())
+    }
+
+    /// Persists one detected product: the `provider_products` row, its price
+    /// (only when changed) and its images.
+    fn save_product(
+        &self,
+        provider: &ProviderRow,
+        scrape_id: &str,
+        product: &crate::detect::Product,
+    ) -> Result<()> {
+        let provider_product = self.ensure_provider_product(
+            provider,
+            product.url.as_deref().unwrap_or(""),
+            &product.name,
+        )?;
+        let currency = product
+            .currency
+            .clone()
+            .or_else(|| provider.default_currency.clone())
+            .unwrap_or_default();
+        self.create_price(&provider_product.id, scrape_id, currency, product)?;
+        self.sync_images(&provider_product.id, &product.images)?;
         Ok(())
     }
 
@@ -173,7 +190,7 @@ impl Store {
             .client
             .records(PROVIDERS_COLLECTION)
             .list()
-            .filter(&format!("domain='{domain}'"))
+            .filter(&format!("domain='{}'", escape_filter(domain)))
             .per_page(1)
             .call::<ProviderRow>()
             .context("could not look up provider")?;
@@ -266,7 +283,11 @@ impl Store {
         field: &str,
         value: &str,
     ) -> Result<Option<ProviderProductRow>> {
-        let filter = format!("provider_id='{provider_id}' && {field}='{value}'");
+        let filter = format!(
+            "provider_id='{}' && {field}='{}'",
+            escape_filter(provider_id),
+            escape_filter(value)
+        );
         let existing = self
             .client
             .records(PROVIDER_PRODUCTS_COLLECTION)
@@ -292,7 +313,10 @@ impl Store {
             .client
             .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
             .list()
-            .filter(&format!("provider_product_id='{provider_product_id}'"))
+            .filter(&format!(
+                "provider_product_id='{}'",
+                escape_filter(provider_product_id)
+            ))
             .sort("-created")
             .per_page(1)
             .call::<PriceRow>()
@@ -324,7 +348,10 @@ impl Store {
             .client
             .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
             .list()
-            .filter(&format!("provider_product_id='{provider_product_id}'"))
+            .filter(&format!(
+                "provider_product_id='{}'",
+                escape_filter(provider_product_id)
+            ))
             .per_page(100)
             .call::<ProductImageRow>()
             .context("could not look up product images")?;
@@ -420,6 +447,14 @@ fn host_of(url: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Escapes a value for use inside a PocketBase filter string literal. Single
+/// quotes and backslashes must be backslash-escaped or the filter parses
+/// wrong (e.g. `product_name='A Drop d'Issey...'` → HTTP 400), which used to
+/// abort the whole save and silently drop the rest of a capture.
+fn escape_filter(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
 #[cfg(test)]
 #[allow(clippy::cognitive_complexity)]
 mod tests {
@@ -433,6 +468,14 @@ mod tests {
             "www.parfumerie.com.ar"
         );
         assert_eq!(host_of("not a url"), "");
+    }
+
+    #[test]
+    fn escape_filter_handles_apostrophes_and_backslashes() {
+        assert_eq!(escape_filter("plain"), "plain");
+        assert_eq!(escape_filter("A Drop d'Issey"), "A Drop d\\'Issey");
+        assert_eq!(escape_filter(r"a\b"), r"a\\b");
+        assert_eq!(escape_filter(r"back\'slash"), r"back\\\'slash");
     }
 
     #[test]

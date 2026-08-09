@@ -1,35 +1,95 @@
 use anyhow::{Context, Result};
 use pocketbase_sdk::client::{Auth, Client};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::detect::Detection;
 
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8090";
-const CAPTURES_COLLECTION: &str = "captures";
-const PRODUCTS_COLLECTION: &str = "products";
+const PROVIDERS_COLLECTION: &str = "providers";
+const SCRAPES_COLLECTION: &str = "scrapes";
+const PROVIDER_PRODUCTS_COLLECTION: &str = "provider_products";
+const PRODUCT_IMAGES_COLLECTION: &str = "product_images";
+const PROVIDER_PRICES_COLLECTION: &str = "provider_prices";
 
-/// Payload for the `captures` collection.
+/// Payload for the `providers` collection.
 #[derive(Serialize, Clone)]
-struct CapturePayload {
-    url: String,
-    host: String,
-    captured_at: u64,
-    container_classes: String,
-    container_id: Option<String>,
-    child_count: usize,
-    detected_cards: usize,
-}
-
-/// Payload for the `products` collection. `capture` is the related captures id.
-#[derive(Serialize, Clone)]
-struct ProductPayload {
-    capture: String,
+struct ProviderPayload {
+    domain: String,
     name: String,
-    price_text: String,
-    price: f64,
+    enabled: bool,
 }
 
-/// Persists captures to a running PocketBase through its Record API.
+#[derive(Default, Deserialize, Debug)]
+#[allow(dead_code)]
+struct ProviderRow {
+    id: String,
+    domain: String,
+    name: String,
+    enabled: bool,
+    default_currency: Option<String>,
+}
+
+/// Payload for the `scrapes` collection.
+#[derive(Serialize, Clone)]
+struct ScrapePayload {
+    provider_id: String,
+    url: String,
+    scraped_at: u64,
+    status: String,
+    capture_path: String,
+    product_count: usize,
+    container_class: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+struct ScrapeRow {
+    id: String,
+}
+
+/// Payload for the `provider_products` collection.
+#[derive(Serialize, Clone)]
+struct ProviderProductPayload {
+    provider_id: String,
+    provider_product_url: String,
+    product_name: String,
+    last_seen_at: u64,
+}
+
+#[derive(Default, Deserialize, Debug)]
+#[allow(dead_code)]
+struct ProviderProductRow {
+    id: String,
+}
+
+/// Payload for the `product_images` collection.
+#[derive(Serialize, Clone)]
+struct ProductImagePayload {
+    provider_product_id: String,
+    url: String,
+    position: usize,
+    is_primary: bool,
+}
+
+#[derive(Default, Deserialize, Debug)]
+#[allow(dead_code)]
+struct ProductImageRow {
+    id: String,
+    url: String,
+    position: usize,
+}/// Payload for the `provider_prices` collection.
+#[derive(Serialize, Clone)]
+struct ProviderPricePayload {
+    provider_product_id: String,
+    scrape_id: String,
+    price: f64,
+    currency: String,
+    price_text: String,
+}
+
+/// Persists detections to a running PocketBase through its Record API using the
+/// normalized schema documented in DATABASE.md (providers, scrapes,
+/// provider_products, product_images, provider_prices).
 ///
 /// The scraper NEVER writes SQL or touches the database file directly — all
 /// writes go through the PocketBase HTTP API as an authenticated superuser
@@ -60,40 +120,219 @@ impl Store {
         Ok(Self { client })
     }
 
-    /// Persists one detection (a capture + its products) through the Record API:
-    /// one `captures` record, then one `products` record per detected product
-    /// linked to the capture via the `capture` relation.
-    pub fn save(&self, url: &str, captured_at: u64, detection: &Detection) -> Result<()> {
+    /// Persists one detection through the Record API:
+    /// one `scrapes` record, then per detected product one `provider_products`
+    /// (upserted by `(provider_id, provider_product_url)`), one
+    /// `provider_prices` record and its `product_images` rows.
+    pub fn save(
+        &self,
+        url: &str,
+        captured_at: u64,
+        capture_path: &str,
+        detection: &Detection,
+    ) -> Result<()> {
         let host = host_of(url);
-        let classes = serde_json::to_string(&detection.container.classes).unwrap_or_default();
-        let capture = self
-            .client
-            .records(CAPTURES_COLLECTION)
-            .create(CapturePayload {
-                url: url.to_string(),
-                host,
-                captured_at,
-                container_classes: classes,
-                container_id: detection.container.id.clone(),
-                child_count: detection.container.child_count,
-                detected_cards: detection.products.len(),
-            })
-            .call()
-            .map_err(|e| anyhow::anyhow!("could not create capture: {e}"))?;
+        let provider = self.ensure_provider(&host)?;
+        let scrape = self.create_scrape(url, captured_at, capture_path, &provider.id, detection)?;
         for product in &detection.products {
-            self.client
-                .records(PRODUCTS_COLLECTION)
-                .create(ProductPayload {
-                    capture: capture.id.clone(),
-                    name: product.name.clone(),
-                    price_text: product.price_text.clone(),
-                    price: product.price,
-                })
-                .call()
-                .map_err(|e| anyhow::anyhow!("could not create product: {e}"))?;
+            let provider_product =
+                self.ensure_provider_product(&provider, product.url.as_deref().unwrap_or(""))?;
+            let currency = product
+                .currency
+                .clone()
+                .or_else(|| provider.default_currency.clone())
+                .unwrap_or_default();
+            self.create_price(&provider_product.id, &scrape.id, currency, product)?;
+            self.sync_images(&provider_product.id, &product.images)?;
         }
         Ok(())
     }
+
+    /// Returns the existing provider for `domain` or creates it (name = domain,
+    /// enabled = true).
+    fn ensure_provider(&self, domain: &str) -> Result<ProviderRow> {
+        let existing = self
+            .client
+            .records(PROVIDERS_COLLECTION)
+            .list()
+            .filter(&format!("domain='{domain}'"))
+            .per_page(1)
+            .call::<ProviderRow>()
+            .context("could not look up provider")?;
+        if let Some(row) = existing.items.into_iter().next() {
+            return Ok(row);
+        }
+        let created = self
+            .client
+            .records(PROVIDERS_COLLECTION)
+            .create(ProviderPayload {
+                domain: domain.to_string(),
+                name: domain.to_string(),
+                enabled: true,
+            })
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not create provider: {e}"))?;
+        Ok(ProviderRow {
+            id: created.id,
+            domain: domain.to_string(),
+            name: domain.to_string(),
+            enabled: true,
+            default_currency: None,
+        })
+    }
+
+    fn create_scrape(
+        &self,
+        url: &str,
+        captured_at: u64,
+        capture_path: &str,
+        provider_id: &str,
+        detection: &Detection,
+    ) -> Result<ScrapeRow> {
+        let container_class = detection.container.classes.first().cloned().unwrap_or_default();
+        self.client
+            .records(SCRAPES_COLLECTION)
+            .create(ScrapePayload {
+                provider_id: provider_id.to_string(),
+                url: url.to_string(),
+                scraped_at: captured_at,
+                status: "success".to_string(),
+                capture_path: capture_path.to_string(),
+                product_count: detection.products.len(),
+                container_class,
+            })
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not create scrape: {e}"))
+            .map(|r| ScrapeRow { id: r.id })
+    }
+
+    /// Returns the provider product for `(provider_id, provider_product_url)`,
+    /// creating it (with `last_seen_at` set) when it does not exist yet.
+    fn ensure_provider_product(
+        &self,
+        provider: &ProviderRow,
+        provider_product_url: &str,
+    ) -> Result<ProviderProductRow> {
+        let filter = format!(
+            "provider_id='{}' && provider_product_url='{}'",
+            provider.id, provider_product_url
+        );
+        let existing = self
+            .client
+            .records(PROVIDER_PRODUCTS_COLLECTION)
+            .list()
+            .filter(&filter)
+            .per_page(1)
+            .call::<ProviderProductRow>()
+            .context("could not look up provider product")?;
+        if let Some(row) = existing.items.into_iter().next() {
+            return Ok(row);
+        }
+        let now = now_secs();
+        let created = self
+            .client
+            .records(PROVIDER_PRODUCTS_COLLECTION)
+            .create(ProviderProductPayload {
+                provider_id: provider.id.clone(),
+                provider_product_url: provider_product_url.to_string(),
+                product_name: String::new(),
+                last_seen_at: now,
+            })
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not create provider product: {e}"))?;
+        Ok(ProviderProductRow { id: created.id })
+    }
+
+    fn create_price(
+        &self,
+        provider_product_id: &str,
+        scrape_id: &str,
+        currency: String,
+        product: &crate::detect::Product,
+    ) -> Result<()> {
+        self.client
+            .records(PROVIDER_PRICES_COLLECTION)
+            .create(ProviderPricePayload {
+                provider_product_id: provider_product_id.to_string(),
+                scrape_id: scrape_id.to_string(),
+                price: product.price,
+                currency,
+                price_text: product.price_text.clone(),
+            })
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not create price: {e}"))
+            .map(|_| ())
+    }
+
+    /// Upserts the product images by display position and removes rows that are
+    /// no longer present. Position 0 is marked as the primary image.
+    fn sync_images(&self, provider_product_id: &str, images: &[String]) -> Result<()> {
+        let existing = self
+            .client
+            .records(PRODUCT_IMAGES_COLLECTION)
+            .list()
+            .filter(&format!("provider_product_id='{provider_product_id}'"))
+            .per_page(100)
+            .call::<ProductImageRow>()
+            .context("could not look up product images")?;
+
+        for (position, url) in images.iter().enumerate() {
+            self.upsert_image(provider_product_id, position, url, &existing.items)?;
+        }
+        self.remove_stale_images(&existing.items, images)?;
+        Ok(())
+    }
+
+    fn upsert_image(
+        &self,
+        provider_product_id: &str,
+        position: usize,
+        url: &str,
+        existing: &[ProductImageRow],
+    ) -> Result<()> {
+        let payload = ProductImagePayload {
+            provider_product_id: provider_product_id.to_string(),
+            url: url.to_string(),
+            position,
+            is_primary: position == 0,
+        };
+        match existing.iter().find(|row| row.position == position) {
+            Some(row) => self
+                .client
+                .records(PRODUCT_IMAGES_COLLECTION)
+                .update(&row.id, payload)
+                .call()
+                .map(|_| ()),
+            None => self
+                .client
+                .records(PRODUCT_IMAGES_COLLECTION)
+                .create(payload)
+                .call()
+                .map(|_| ()),
+        }
+        .map_err(|e| anyhow::anyhow!("could not write product image: {e}"))
+    }
+
+    fn remove_stale_images(&self, existing: &[ProductImageRow], images: &[String]) -> Result<()> {
+        for row in existing {
+            let still_wanted = images.get(row.position).is_some_and(|u| *u == row.url);
+            if !still_wanted {
+                self.client
+                    .records(PRODUCT_IMAGES_COLLECTION)
+                    .destroy(&row.id)
+                    .call()
+                    .map_err(|e| anyhow::anyhow!("could not delete stale product image: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn host_of(url: &str) -> String {
@@ -119,39 +358,75 @@ mod tests {
     }
 
     #[test]
-    fn capture_payload_serializes_detection_fields() {
-        let payload = CapturePayload {
+    fn scrape_payload_serializes_detection_fields() {
+        let payload = ScrapePayload {
+            provider_id: "prov-1".to_string(),
             url: "https://www.parfumerie.com.ar/fragancias".to_string(),
-            host: "www.parfumerie.com.ar".to_string(),
-            captured_at: 123456,
-            container_classes: r#"["products","row"]"#.to_string(),
-            container_id: Some("grid-1".to_string()),
-            child_count: 2,
-            detected_cards: 2,
+            scraped_at: 123456,
+            status: "success".to_string(),
+            capture_path: "captures/www.parfumerie.com.ar/capture-123456.json".to_string(),
+            product_count: 2,
+            container_class: "products".to_string(),
         };
         let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["provider_id"], "prov-1");
         assert_eq!(json["url"], "https://www.parfumerie.com.ar/fragancias");
-        assert_eq!(json["host"], "www.parfumerie.com.ar");
-        assert_eq!(json["captured_at"], 123456);
-        assert_eq!(json["container_classes"], r#"["products","row"]"#);
-        assert_eq!(json["container_id"], "grid-1");
-        assert_eq!(json["child_count"], 2);
-        assert_eq!(json["detected_cards"], 2);
+        assert_eq!(json["scraped_at"], 123456);
+        assert_eq!(json["status"], "success");
+        assert_eq!(
+            json["capture_path"],
+            "captures/www.parfumerie.com.ar/capture-123456.json"
+        );
+        assert_eq!(json["product_count"], 2);
+        assert_eq!(json["container_class"], "products");
     }
 
     #[test]
-    fn product_payload_serializes_relation_and_price() {
-        let payload = ProductPayload {
-            capture: "capture-id".to_string(),
-            name: "Light Blue Homme EDP 50".to_string(),
-            price_text: "242.100".to_string(),
-            price: 242100.0,
+    fn provider_product_payload_serializes_relation_and_key() {
+        let payload = ProviderProductPayload {
+            provider_id: "prov-1".to_string(),
+            provider_product_url: "/a/light-blue-homme-edp-50".to_string(),
+            product_name: String::new(),
+            last_seen_at: 123456,
         };
         let json = serde_json::to_value(&payload).unwrap();
-        assert_eq!(json["capture"], "capture-id");
-        assert_eq!(json["name"], "Light Blue Homme EDP 50");
-        assert_eq!(json["price_text"], "242.100");
+        assert_eq!(json["provider_id"], "prov-1");
+        assert_eq!(
+            json["provider_product_url"],
+            "/a/light-blue-homme-edp-50"
+        );
+        assert_eq!(json["last_seen_at"], 123456);
+    }
+
+    #[test]
+    fn price_payload_serializes_relation_and_values() {
+        let payload = ProviderPricePayload {
+            provider_product_id: "pp-1".to_string(),
+            scrape_id: "scr-1".to_string(),
+            price: 242100.0,
+            currency: "ARS".to_string(),
+            price_text: "242.100".to_string(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["provider_product_id"], "pp-1");
+        assert_eq!(json["scrape_id"], "scr-1");
         assert_eq!(json["price"], 242100.0);
+        assert_eq!(json["currency"], "ARS");
+        assert_eq!(json["price_text"], "242.100");
+    }
+
+    #[test]
+    fn product_image_payload_marks_first_as_primary() {
+        let payload = ProductImagePayload {
+            provider_product_id: "pp-1".to_string(),
+            url: "https://cdn.example/img/1.jpg".to_string(),
+            position: 0,
+            is_primary: true,
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["provider_product_id"], "pp-1");
+        assert_eq!(json["position"], 0);
+        assert_eq!(json["is_primary"], true);
     }
 
     #[test]
@@ -167,11 +442,13 @@ mod tests {
                     name: "Light Blue Homme EDP 50".to_string(),
                     price_text: "242.100".to_string(),
                     price: 242100.0,
+                    ..Product::default()
                 },
                 Product {
                     name: "212 Vip EDP 80".to_string(),
                     price_text: "278.100".to_string(),
                     price: 278100.0,
+                    ..Product::default()
                 },
             ],
         };

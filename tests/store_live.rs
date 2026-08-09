@@ -15,11 +15,17 @@ fn sample_detection() -> Detection {
                 name: "Light Blue Homme EDP 50".to_string(),
                 price_text: "242.100".to_string(),
                 price: 242100.0,
+                url: Some("/a/light-blue-homme-edp-50".to_string()),
+                images: vec!["https://cdn.example/img/1.jpg".to_string()],
+                currency: Some("ARS".to_string()),
             },
             Product {
                 name: "212 Vip EDP 80".to_string(),
                 price_text: "278.100".to_string(),
                 price: 278100.0,
+                url: Some("/b/212-vip-edp-80".to_string()),
+                images: Vec::new(),
+                currency: None,
             },
         ],
     }
@@ -27,20 +33,44 @@ fn sample_detection() -> Detection {
 
 #[derive(Debug, Default, Deserialize)]
 #[allow(dead_code)]
-struct ProductRow {
+struct ProviderRow {
     id: String,
+    domain: String,
     name: String,
-    price_text: String,
-    price: f64,
+    enabled: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[allow(dead_code)]
-struct CaptureRow {
+struct ScrapeRow {
     id: String,
     url: String,
-    host: String,
-    detected_cards: usize,
+    product_count: usize,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[allow(dead_code)]
+struct ProviderProductRow {
+    id: String,
+    provider_product_url: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[allow(dead_code)]
+struct PriceRow {
+    id: String,
+    price: f64,
+    currency: String,
+    price_text: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[allow(dead_code)]
+struct ImageRow {
+    id: String,
+    url: String,
+    position: usize,
+    is_primary: bool,
 }
 
 fn env_base_url() -> String {
@@ -52,48 +82,84 @@ fn env_password() -> String {
         .unwrap_or_else(|_| "changeme".to_string())
 }
 
-/// Round-trips a capture + products through the PocketBase Record API and
-/// verifies the rows land in the collections. Requires a running PocketBase
+/// Round-trips a detection through the PocketBase Record API against the
+/// normalized schema (providers, scrapes, provider_products, provider_prices,
+/// product_images) and verifies the rows land. Requires a running PocketBase
 /// (`pocketbase serve --dir ... --migrationsDir pocketbase/migrations`).
 #[test]
 #[ignore = "requires a running PocketBase instance"]
 #[allow(clippy::cognitive_complexity)]
 fn save_round_trips_through_the_api() {
     let url = "https://www.parfumerie.com.ar/fragancias";
+    let host = "www.parfumerie.com.ar";
+    let capture_path = format!("captures/{host}/capture-123456.json");
     let store = Store::connect().expect("connect to PocketBase");
-    store.save(url, 123456, &sample_detection()).expect("save");
+    store
+        .save(url, 123456, &capture_path, &sample_detection())
+        .expect("save");
 
     let client = Client::new(&env_base_url())
         .superusers()
         .auth_with_password("admin@pricehunter.local", &env_password())
         .expect("admin auth");
 
-    let captures = client
-        .records("captures")
+    let providers = client
+        .records("providers")
+        .list()
+        .filter(&format!("domain='{host}'"))
+        .call::<ProviderRow>()
+        .expect("list providers");
+    assert_eq!(providers.items.len(), 1, "provider should be auto-created");
+
+    let scrapes = client
+        .records("scrapes")
         .list()
         .filter(&format!("url='{url}'"))
-        .call::<CaptureRow>()
-        .expect("list captures");
+        .call::<ScrapeRow>()
+        .expect("list scrapes");
     assert!(
-        captures.items.iter().any(|c| c.host == "www.parfumerie.com.ar" && c.detected_cards == 2),
-        "capture should have landed with host + detected_cards, got {:?}",
-        captures.items
+        scrapes.items.iter().any(|s| s.product_count == 2),
+        "scrape should have landed with product_count == 2, got {:?}",
+        scrapes.items
     );
 
     let products = client
-        .records("products")
+        .records("provider_products")
         .list()
-        .call::<ProductRow>()
-        .expect("list products");
-    let names: Vec<&str> = products.items.iter().map(|p| p.name.as_str()).collect();
-    assert!(names.contains(&"Light Blue Homme EDP 50"), "missing first product");
-    assert!(names.contains(&"212 Vip EDP 80"), "missing second product");
-
-    let found = products
+        .call::<ProviderProductRow>()
+        .expect("list provider products");
+    let urls: Vec<&str> = products
         .items
         .iter()
-        .find(|p| p.name == "Light Blue Homme EDP 50")
-        .expect("first product present");
-    assert_eq!(found.price, 242100.0);
-    assert_eq!(found.price_text, "242.100");
+        .map(|p| p.provider_product_url.as_str())
+        .collect();
+    assert!(
+        urls.contains(&"/a/light-blue-homme-edp-50"),
+        "provider product should be keyed by its URL, got {urls:?}"
+    );
+
+    let prices = client
+        .records("provider_prices")
+        .list()
+        .call::<PriceRow>()
+        .expect("list prices");
+    assert!(
+        prices
+            .items
+            .iter()
+            .any(|p| p.price == 242100.0 && p.currency == "ARS" && p.price_text == "242.100"),
+        "price with detected currency should land, got {:?}",
+        prices.items
+    );
+
+    let images = client
+        .records("product_images")
+        .list()
+        .call::<ImageRow>()
+        .expect("list product images");
+    assert!(
+        images.items.iter().any(|i| i.url == "https://cdn.example/img/1.jpg" && i.is_primary),
+        "primary image should land, got {:?}",
+        images.items
+    );
 }

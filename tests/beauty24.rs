@@ -10,26 +10,31 @@ fn products() -> Vec<Product> {
             name: String::from("Dylan Blush Pink EDP 100 ml + Neceser"),
             price_text: String::new(),
             price: 328000.0,
+            ..Default::default()
         },
         Product {
             name: String::from("Crystal Emerald EDP"),
             price_text: String::new(),
             price: 328000.0,
+            ..Default::default()
         },
         Product {
             name: String::from("Blue Jeans EDT 75 ml"),
             price_text: String::new(),
             price: 79990.0,
+            ..Default::default()
         },
         Product {
             name: String::from("Fresh Gold EDP 100 ml"),
             price_text: String::new(),
             price: 95400.0,
+            ..Default::default()
         },
         Product {
             name: String::from("Funny EDT Ed. Limitada"),
             price_text: String::new(),
             price: 94340.0,
+            ..Default::default()
         },
     ]
 }

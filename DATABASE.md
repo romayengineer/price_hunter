@@ -11,6 +11,7 @@ erDiagram
         varchar domain UK "e.g. www.provider.com"
         varchar name
         boolean enabled
+        varchar default_currency "fallback for provider_prices.currency"
         datetime created_at
     }
 
@@ -92,12 +93,13 @@ erDiagram
 
 ### providers
 
-| Column     | Type    | Notes |
-| ---------- | ------- | ----- |
+| Column    | Type    | Notes |
+| --------- | ------- | ----- |
 | id         | int     | primary key |
 | domain     | varchar | unique, e.g. `www.provider.com` |
 | name       | varchar | display name |
 | enabled    | boolean | whether this provider is being scraped |
+| default_currency | varchar | fallback when no currency is detected on a card (e.g. `ARS`) |
 | created_at | datetime | |
 
 ### products

@@ -13,11 +13,17 @@ pub struct Price {
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct Product {
     pub name: String,
     pub price_text: String,
     pub price: f64,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub images: Vec<String>,
+    #[serde(default)]
+    pub currency: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -515,10 +521,14 @@ fn extract_products(
             let price = current_price_of(html, price_div_id)
                 .or_else(|| prices.last().cloned())
                 .expect("price div has a price");
+            let card_id = card_of(html, price_div_id, container_id);
             Product {
                 name: guess_name(html, price_div_id, container_id),
                 price_text: price.text.clone(),
                 price: price.value,
+                url: product_link(html, card_id),
+                images: card_images(html, card_id),
+                currency: detect_currency(html, card_id),
             }
         })
         .collect()
@@ -678,6 +688,90 @@ fn find_structured_name(node: &NodeRef<'_, Node>) -> Option<String> {
                 }
             }
             _ => {}
+        }
+    }
+    None
+}
+
+fn product_link(html: &Html, card_id: NodeId) -> Option<String> {
+    let node = html.tree.get(card_id)?;
+    let mut fallback = None;
+    for n in node.descendants() {
+        let Node::Element(el) = n.value() else {
+            continue;
+        };
+        if el.name() != "a" {
+            continue;
+        }
+        let Some(href) = el.attr("href").map(str::trim) else {
+            continue;
+        };
+        if href.is_empty() {
+            continue;
+        }
+        let is_structured = el.attr("data-role") == Some("product-item-name")
+            || el.classes().any(|c| c.contains("product-item-name"));
+        if is_structured {
+            return Some(href.to_string());
+        }
+        if fallback.is_none() {
+            fallback = Some(href.to_string());
+        }
+    }
+    fallback
+}
+
+fn card_images(html: &Html, card_id: NodeId) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    let Some(node) = html.tree.get(card_id) else {
+        return out;
+    };
+    for n in node.descendants() {
+        let Node::Element(el) = n.value() else {
+            continue;
+        };
+        if el.name() != "img" {
+            continue;
+        }
+        let Some(src) = el.attr("src").map(str::trim) else {
+            continue;
+        };
+        if src.is_empty() {
+            continue;
+        }
+        if seen.insert(src.to_string()) {
+            out.push(src.to_string());
+        }
+    }
+    out
+}
+
+fn detect_currency(html: &Html, card_id: NodeId) -> Option<String> {
+    let node = html.tree.get(card_id)?;
+    let text: String = node
+        .descendants()
+        .filter_map(|x| match x.value() {
+            Node::Text(t) => Some(&*t.text),
+            _ => None,
+        })
+        .collect();
+    let text = text.to_uppercase();
+    for (needle, code) in [
+        ("US$", "USD"),
+        ("U$S", "USD"),
+        ("USD", "USD"),
+        ("AR$", "ARS"),
+        ("ARS", "ARS"),
+        ("\u{20ac}", "EUR"),
+        ("EUR", "EUR"),
+        ("\u{a3}", "GBP"),
+        ("GBP", "GBP"),
+        ("R$", "BRL"),
+        ("BRL", "BRL"),
+    ] {
+        if text.contains(needle) {
+            return Some(code.to_string());
         }
     }
     None
@@ -957,6 +1051,52 @@ mod tests {
         assert_eq!(detection.products[0].price, 12.99);
         assert_eq!(detection.products[0].price_text, "12,99");
         assert_eq!(detection.products[1].price, 24.5);
+    }
+
+    #[test]
+    fn captures_product_url_images_and_currency() {
+        let html = r#"
+        <html><body>
+          <div class="product-grid">
+            <div class="card">
+              <a data-role="product-item-name" href="/perfumes/alpha">Alpha EDP 50</a>
+              <img src="/img/alpha-1.jpg" alt="Alpha EDP 50">
+              <img src="/img/alpha-1.jpg" alt="Alpha EDP 50">
+              <img src="/img/alpha-2.jpg" alt="Alpha EDP 50">
+              <span class="price">$&nbsp;242.100</span>
+            </div>
+            <div class="card">
+              <a data-role="product-item-name" href="/perfumes/beta">Beta EDP 50</a>
+              <img src="/img/beta.jpg" alt="Beta EDP 50">
+              <span class="price">AR$&nbsp;99.900</span>
+            </div>
+          </div>
+        </body></html>
+        "#;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(detection.products.len(), 2);
+        assert_eq!(detection.products[0].url.as_deref(), Some("/perfumes/alpha"));
+        assert_eq!(
+            detection.products[0].images,
+            vec!["/img/alpha-1.jpg".to_string(), "/img/alpha-2.jpg".to_string()]
+        );
+        assert_eq!(detection.products[1].url.as_deref(), Some("/perfumes/beta"));
+        assert_eq!(detection.products[1].images, vec!["/img/beta.jpg".to_string()]);
+        assert_eq!(detection.products[1].currency.as_deref(), Some("ARS"));
+    }
+
+    #[test]
+    fn bare_dollar_does_not_force_a_currency() {
+        let html = r#"
+        <html><body>
+          <div class="product-grid">
+            <div class="card"><a href="/a">Alpha</a><span class="price">$ 12.990</span></div>
+            <div class="card"><a href="/b">Beta</a><span class="price">$ 8.190</span></div>
+          </div>
+        </body></html>
+        "#;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert!(detection.products.iter().all(|p| p.currency.is_none()));
     }
 }
 

@@ -9,9 +9,10 @@ arbitrary e-commerce HTML and captures them as JSON. Uses `thirtyfour`
   heart of the project).
 - `src/browser.rs` — launches Chrome via a persistent profile.
 - `src/capture.rs` — writes JSON captures under `captures/<host>/`.
-- `src/store.rs` — persists captures + products to a running PocketBase via its
-  Record API using the `pocketbase-sdk` crate (async HTTP, no SQL, no DB file
-  access). Mirrors the `captures`/`products` collections in
+- `src/store.rs` — persists detections to a running PocketBase via its Record
+  API using the `pocketbase-sdk` crate (async HTTP, no SQL, no DB file access).
+  Writes the normalized schema (`providers`, `scrapes`, `provider_products`,
+  `product_images`, `provider_prices`) defined in `DATABASE.md` and mirrored in
   `pocketbase/migrations/`.
 - `src/main.rs` — `cargo run`: opens a real, user-controlled browser and polls
   it for captures in the background.
@@ -38,7 +39,8 @@ arbitrary e-commerce HTML and captures them as JSON. Uses `thirtyfour`
    price-rich divs (top half by price count), picks the **densest**
    (`price_count / div_count`). This is what separates the real grid from the
    whole-page `page-wrapper` on live sites.
-3. `extract_products` — one `Product` per card (name + current price). Price
+3. `extract_products` — one `Product` per card (name + current price, plus the
+   card link `url`, deduped `images`, and best-effort `currency`). Price
    prefers `current_price_of(...)` (an element marked `itemprop="price"` or
    `data-price-type="finalPrice"`) and falls back to the last detected price;
    name comes from `guess_name` (walks up from the price div:
@@ -62,8 +64,9 @@ Public API (`src/lib.rs` re-exports modules): `browser::{launch, profile_dir}`,
 `capture::write_capture`, `detect::{detect_grid, diagnose_containers,
 Price, Product, Container, Detection, ContainerCandidate}`, `store::{Store}`.
 `Store` is a sync client (`Store::connect()` then `save(url, captured_at,
-&Detection)`) that talks to PocketBase over its Record API; it returns `None`
-from `main`'s `connect_store()` if PocketBase is down, leaving JSON-only mode.
+capture_path, &Detection)`) that talks to PocketBase over its Record API; it
+returns `None` from `main`'s `connect_store()` if PocketBase is down, leaving
+JSON-only mode.
 
 ## Toolchain
 - Pinned to `stable` via `rust-toolchain.toml` (rustup auto-uses it).

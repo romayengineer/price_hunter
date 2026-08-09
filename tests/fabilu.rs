@@ -10,26 +10,31 @@ fn products() -> Vec<Product> {
             name: String::from("PAULVIC WOMAN X50ML"),
             price_text: String::new(),
             price: 8190.0,
+            ..Default::default()
         },
         Product {
             name: String::from("PAULVIC MEN X50ML"),
             price_text: String::new(),
             price: 8190.0,
+            ..Default::default()
         },
         Product {
             name: String::from("PIBES COLONIA X95ML"),
             price_text: String::new(),
             price: 7400.0,
+            ..Default::default()
         },
         Product {
             name: String::from("MUJERCITAS EDP X 40 ML"),
             price_text: String::new(),
             price: 7020.0,
+            ..Default::default()
         },
         Product {
             name: String::from("DANIELLE EDT X90ML"),
             price_text: String::new(),
             price: 7117.0,
+            ..Default::default()
         },
     ]
 }

@@ -119,11 +119,17 @@ async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
         detection.products.len(),
         path.display()
     );
-    persist_to_store(&mut state.store, &url, detection);
+    let capture_path = path.display().to_string();
+    persist_to_store(&mut state.store, &url, &capture_path, detection);
     state.last_capture_products = Some(detection.products.clone());
 }
 
-fn persist_to_store(store: &mut Option<Store>, url: &str, detection: &Detection) {
+fn persist_to_store(
+    store: &mut Option<Store>,
+    url: &str,
+    capture_path: &str,
+    detection: &Detection,
+) {
     let Some(store) = store else {
         return;
     };
@@ -131,7 +137,7 @@ fn persist_to_store(store: &mut Option<Store>, url: &str, detection: &Detection)
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    match store.save(url, now, detection) {
+    match store.save(url, now, capture_path, detection) {
         Ok(()) => println!("Persisted capture to the store"),
         Err(e) => eprintln!("Could not persist capture to the store: {e}"),
     }

@@ -78,6 +78,8 @@ from `main`'s `connect_store()` if PocketBase is down, leaving JSON-only mode.
   later `cargo run`s reuse the session.
 
 ## Run
+- `bash pocketbase/scripts/run_pocketbase.sh` starts the PocketBase server
+  (data dir outside the repo, repo-relative migrations dir).
 - `cargo run` opens Chrome and keeps it open until the window is closed or Ctrl+C.
 - Optional URL arg: `cargo run -- https://example.com`. Failed navigation warns
   but keeps the session alive.

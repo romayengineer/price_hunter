@@ -75,9 +75,7 @@ POCKETBASE_SUPERUSER_PASSWORD='<password>' \
   bash pocketbase/scripts/setup_pocketbase.sh   # creates superuser + data dir
 
 # Start the server (migrations apply on first start, creating the collections):
-pocketbase serve \
-  --dir ~/.local/share/price_hunter/pb_data \
-  --migrationsDir pocketbase/migrations
+bash pocketbase/scripts/run_pocketbase.sh
 ```
 
 - Admin dashboard (browse captures/products): `http://127.0.0.1:8090/_/`

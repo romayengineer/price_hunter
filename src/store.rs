@@ -449,6 +449,38 @@ impl Store {
         currency: String,
         product: &crate::detect::Product,
     ) -> Result<()> {
+        let payload = ProviderPricePayload {
+            provider_product_id: provider_product_id.to_string(),
+            scrape_id: scrape_id.to_string(),
+            price: product.price,
+            currency: currency.clone(),
+            price_text: product.price_text.clone(),
+        };
+        // Idempotency for this scrape: a capture can contain the same
+        // provider product twice (same name/URL in one page). The unique
+        // `(provider_product_id, scrape_id)` index makes a second insert
+        // fail, so update the existing row instead.
+        let existing = self
+            .client
+            .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
+            .list()
+            .filter(&format!(
+                "provider_product_id='{}' && scrape_id='{}'",
+                escape_filter(provider_product_id),
+                escape_filter(scrape_id)
+            ))
+            .per_page(1)
+            .call::<PriceRow>()
+            .context("could not look up existing price")?;
+        if let Some(row) = existing.items.into_iter().next() {
+            return self
+                .client
+                .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
+                .update(&row.id, payload)
+                .call()
+                .map_err(|e| anyhow::anyhow!("could not update price: {e}"))
+                .map(|_| ());
+        }
         let last = self
             .client
             .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
@@ -469,13 +501,7 @@ impl Store {
         }
         self.client
             .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
-            .create(ProviderPricePayload {
-                provider_product_id: provider_product_id.to_string(),
-                scrape_id: scrape_id.to_string(),
-                price: product.price,
-                currency,
-                price_text: product.price_text.clone(),
-            })
+            .create(payload)
             .call()
             .map_err(|e| anyhow::anyhow!("could not create price: {e}"))
             .map(|_| ())

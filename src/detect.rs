@@ -696,6 +696,7 @@ fn find_structured_name(node: &NodeRef<'_, Node>) -> Option<String> {
 fn product_link(html: &Html, card_id: NodeId) -> Option<String> {
     let node = html.tree.get(card_id)?;
     let mut fallback = None;
+    let mut titled = None;
     for n in node.descendants() {
         let Node::Element(el) = n.value() else {
             continue;
@@ -706,7 +707,7 @@ fn product_link(html: &Html, card_id: NodeId) -> Option<String> {
         let Some(href) = el.attr("href").map(str::trim) else {
             continue;
         };
-        if href.is_empty() {
+        if href.is_empty() || is_placeholder_href(href) {
             continue;
         }
         let is_structured = el.attr("data-role") == Some("product-item-name")
@@ -717,8 +718,44 @@ fn product_link(html: &Html, card_id: NodeId) -> Option<String> {
         if fallback.is_none() {
             fallback = Some(href.to_string());
         }
+        if titled.is_none() && anchor_has_text(html, n.id()) {
+            titled = Some(href.to_string());
+        }
     }
-    fallback
+    titled.or(fallback)
+}
+
+/// True for links that don't point anywhere useful for a product page:
+/// `#` anchors, `javascript:` stubs, `mailto:`/`tel:`, and bare fragment
+/// links (e.g. `https://site/category#`). Those are usually icon/button
+/// links that appear before the real product link in the card.
+fn is_placeholder_href(href: &str) -> bool {
+    let href = href.trim();
+    if href.is_empty() || href == "#" {
+        return true;
+    }
+    if ["javascript:", "mailto:", "tel:", "data:"]
+        .iter()
+        .any(|prefix| href.starts_with(prefix))
+    {
+        return true;
+    }
+    href.ends_with('#')
+}
+
+/// Whether the anchor carries any text of its own (a product-title link) as
+/// opposed to being an icon-only link (image + no text).
+fn anchor_has_text(html: &Html, id: NodeId) -> bool {
+    let Some(node) = html.tree.get(id) else {
+        return false;
+    };
+    let mut text = String::new();
+    for child in node.descendants() {
+        if let Node::Text(t) = child.value() {
+            text.push_str(&t.text);
+        }
+    }
+    !collapse_whitespace(&text).is_empty()
 }
 
 fn card_images(html: &Html, card_id: NodeId) -> Vec<String> {
@@ -1097,6 +1134,44 @@ mod tests {
         "#;
         let detection = detect_grid(html).expect("grid should be detected");
         assert!(detection.products.iter().all(|p| p.currency.is_none()));
+    }
+
+    #[test]
+    fn product_link_skips_placeholder_anchors() {
+        // compreahora-style card: icon/button anchors come first in the card
+        // and must not be picked as the product URL.
+        let html = r##"
+        <html><body>
+          <div class="product-grid">
+            <div class="card">
+              <a href="https://www.compreahora.com.ar/categoria/perfumeria#" class="shopping-list-icon"><img alt="Axe Gold"></a>
+              <a href="javascript:void(0)"><img alt="Axe Gold"></a>
+              <a href="#"><span class="icon"></span></a>
+              <h3><a href="/producto/desodorante-axe-gold-vainilla-en-aerosol-150-ml">Desodorante Axe Gold vainilla en aerosol 150 ml</a></h3>
+              <span class="price">$ 3.744,05</span>
+            </div>
+            <div class="card">
+              <a href="https://www.compreahora.com.ar/categoria/perfumeria#" class="shopping-list-icon"><img alt="Axe Musk"></a>
+              <h3><a href="/producto/desodorante-para-hombre-axe-musk-musk-en-aerosol-150-ml">Desodorante para hombre Axe Musk musk en aerosol 150 ml</a></h3>
+              <span class="price">$ 3.744,05</span>
+            </div>
+            <div class="card">
+              <a href="javascript:void(0)"><img alt="Dove"></a>
+              <h3><a href="/producto/antitranspirante-pomelo-1-4-crema-humectante-dove-en-aerosol-150-ml">Antitranspirante pomelo 1/4 crema humectante Dove en aerosol 150 ml</a></h3>
+              <span class="price">$ 4.564,91</span>
+            </div>
+          </div>
+        </body></html>
+        "##;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(
+            detection.products[0].url.as_deref(),
+            Some("/producto/desodorante-axe-gold-vainilla-en-aerosol-150-ml")
+        );
+        assert_eq!(
+            detection.products[1].url.as_deref(),
+            Some("/producto/desodorante-para-hombre-axe-musk-musk-en-aerosol-150-ml")
+        );
     }
 }
 

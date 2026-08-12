@@ -50,7 +50,12 @@ arbitrary e-commerce HTML and captures them as JSON. Uses `thirtyfour`
    `data-price-type="finalPrice"`) and falls back to the last detected price;
    name comes from `guess_name` (walks up from the price div:
    `a[data-role="product-item-name"]`, `a[title/aria-label]`, `a` text,
-   `img alt`, else the largest alphabetic text block).
+   `img alt`, else the largest alphabetic text block). The name is then
+   post-processed by `enrich_name_with_size`: if it lacks a size (number +
+   unit), the size is taken from the card's SKU selector (the `--selected`
+   option first), then from the product URL slug, then by appending `ml` to a
+   trailing bare number (e.g. `edp 50` → `edp 50 ml`). Names that already
+   carry a size (`100 ml`, `X50ML`, `132 g`, …) are left unchanged.
 
 Supporting heuristics worth knowing:
 - `card_of` groups price divs into per-product cards; it descends one level

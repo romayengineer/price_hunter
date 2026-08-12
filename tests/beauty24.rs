@@ -13,7 +13,7 @@ fn products() -> Vec<Product> {
             ..Default::default()
         },
         Product {
-            name: String::from("Crystal Emerald EDP"),
+            name: String::from("Crystal Emerald EDP 90 ml"),
             price_text: String::new(),
             price: 328000.0,
             ..Default::default()
@@ -31,7 +31,7 @@ fn products() -> Vec<Product> {
             ..Default::default()
         },
         Product {
-            name: String::from("Funny EDT Ed. Limitada"),
+            name: String::from("Funny EDT Ed. Limitada 100ml"),
             price_text: String::new(),
             price: 94340.0,
             ..Default::default()

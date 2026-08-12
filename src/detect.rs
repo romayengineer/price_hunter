@@ -522,11 +522,17 @@ fn extract_products(
                 .or_else(|| prices.last().cloned())
                 .expect("price div has a price");
             let card_id = card_of(html, price_div_id, container_id);
+            let url = product_link(html, card_id);
             Product {
-                name: guess_name(html, price_div_id, container_id),
+                name: enrich_name_with_size(
+                    html,
+                    card_id,
+                    guess_name(html, price_div_id, container_id),
+                    url.as_deref().unwrap_or(""),
+                ),
                 price_text: price.text.clone(),
                 price: price.value,
-                url: product_link(html, card_id),
+                url,
                 images: card_images(html, card_id),
                 currency: detect_currency(html, card_id),
             }
@@ -617,6 +623,115 @@ fn guess_name(html: &Html, id: NodeId, container_id: NodeId) -> String {
         }
         node = parent;
     }
+}
+
+/// Recognized product-size units, case-insensitive.
+fn is_size_unit(unit: &str) -> bool {
+    matches!(unit.to_ascii_lowercase().as_str(), "ml" | "g" | "gr" | "l" | "lt")
+}
+
+/// Returns the first `N unit` substring in `text` (e.g. `100 ml`, `100ml`,
+/// `100 Ml`, `X50ML`, `132 g`), preserving its original spacing/case. Used to
+/// detect whether a name already carries its size and to lift the size out of
+/// SKU selectors and product URLs.
+fn find_size_in_text(text: &str) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let num_start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        let mut j = i;
+        if j < chars.len() && chars[j].is_whitespace() {
+            j += 1;
+        }
+        let unit_start = j;
+        while j < chars.len() && chars[j].is_ascii_alphabetic() {
+            j += 1;
+        }
+        if unit_start < j && is_size_unit(&chars[unit_start..j].iter().collect::<String>()) {
+            let matched: String = chars[num_start..j].iter().collect();
+            return Some(collapse_whitespace(&matched));
+        }
+        i = j;
+    }
+    None
+}
+
+/// Whether `name` already carries a size (number + unit).
+fn has_size(name: &str) -> bool {
+    find_size_in_text(name).is_some()
+}
+
+/// Whether `name` ends in a bare number (e.g. `edp 50`) with no unit.
+fn has_trailing_bare_number(name: &str) -> bool {
+    name.split_whitespace()
+        .next_back()
+        .is_some_and(|token| !token.is_empty() && token.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Lifts the product size out of a VTEX-style SKU selector inside the card.
+/// Prefers the option marked `--selected`, falling back to the first one that
+/// carries a size.
+fn size_from_sku_selector(html: &Html, card_id: NodeId) -> Option<String> {
+    let node = html.tree.get(card_id)?;
+    let mut first: Option<String> = None;
+    for n in node.descendants() {
+        let Node::Element(el) = n.value() else {
+            continue;
+        };
+        if !el.classes().any(|c| c.contains("skuSelectorItem")) {
+            continue;
+        }
+        let text: String = n
+            .descendants()
+            .filter_map(|x| match x.value() {
+                Node::Text(t) => Some(&*t.text),
+                _ => None,
+            })
+            .collect();
+        let text = collapse_whitespace(&text);
+        let Some(size) = find_size_in_text(&text) else {
+            continue;
+        };
+        if el.classes().any(|c| c.contains("selected")) {
+            return Some(size);
+        }
+        if first.is_none() {
+            first = Some(size);
+        }
+    }
+    first
+}
+
+/// Lifts the product size out of a product URL slug (e.g. `...-100ml-...`).
+fn size_from_url(url: &str) -> Option<String> {
+    find_size_in_text(url)
+}
+
+/// Ensures the extracted product name carries its size. Names that already
+/// include a size are returned unchanged. Otherwise the size is taken from the
+/// card's SKU selector (selected option first), then from the product URL, and
+/// finally by appending `ml` to a trailing bare number (e.g. `edp 50`).
+fn enrich_name_with_size(html: &Html, card_id: NodeId, name: String, url: &str) -> String {
+    if has_size(&name) {
+        return name;
+    }
+    if let Some(size) = size_from_sku_selector(html, card_id) {
+        return format!("{name} {size}");
+    }
+    if let Some(size) = size_from_url(url) {
+        return format!("{name} {size}");
+    }
+    if has_trailing_bare_number(&name) {
+        return format!("{name} ml");
+    }
+    name
 }
 
 fn collapse_whitespace(text: &str) -> String {
@@ -1022,10 +1137,10 @@ mod tests {
         let detection = detect_grid(html).expect("grid should be detected");
         assert_eq!(detection.container.classes, vec!["products", "row"]);
         assert_eq!(detection.products.len(), 2);
-        assert_eq!(detection.products[0].name, "Light Blue Homme EDP 50");
+        assert_eq!(detection.products[0].name, "Light Blue Homme EDP 50 ml");
         assert_eq!(detection.products[0].price, 242100.0);
         assert_eq!(detection.products[0].price_text, "242.100");
-        assert_eq!(detection.products[1].name, "Bottled Beyond EDT 50");
+        assert_eq!(detection.products[1].name, "Bottled Beyond EDT 50 ml");
         assert_eq!(detection.products[1].price, 219000.0);
         assert_eq!(detection.products[1].price_text, "219.000");
     }
@@ -1172,6 +1287,112 @@ mod tests {
             detection.products[1].url.as_deref(),
             Some("/producto/desodorante-para-hombre-axe-musk-musk-en-aerosol-150-ml")
         );
+    }
+
+    #[test]
+    fn size_helpers_recognize_units() {
+        assert_eq!(find_size_in_text("Gold Fresh Couture EDP"), None);
+        assert_eq!(find_size_in_text("Crystal Emerald EDP"), None);
+        assert_eq!(find_size_in_text("Dylan Blush Pink EDP 100 ml"), Some("100 ml".into()));
+        assert_eq!(find_size_in_text("light blue homme edp 50"), None);
+        assert_eq!(find_size_in_text("PAULVIC WOMAN X50ML"), Some("50ML".into()));
+        assert_eq!(find_size_in_text("132 g"), Some("132 g".into()));
+        assert_eq!(find_size_in_text("100 Ml"), Some("100 Ml".into()));
+        assert_eq!(find_size_in_text("Promo 100ml"), Some("100ml".into()));
+        assert_eq!(find_size_in_text("fresh-gold-edp-precio-promocional-100ml/p"), Some("100ml".into()));
+        assert!(has_size("Blue Jeans EDT 75 ml"));
+        assert!(!has_size("Funny EDT Ed. Limitada"));
+        assert!(has_trailing_bare_number("light blue homme edp 50"));
+        assert!(!has_trailing_bare_number("One Million EDT"));
+    }
+
+    #[test]
+    fn size_from_sku_selector_prefers_selected() {
+        let html = r##"
+        <html><body>
+          <div class="product-grid">
+            <div class="card">
+              <h3><a href="/crystal-emerald">Crystal Emerald EDP</a></h3>
+              <div class="skuSelectorContainer">
+                <div class="skuSelectorItem skuSelectorItem--50-ml"><span class="valueWrapper">50 ml</span></div>
+                <div class="skuSelectorItem skuSelectorItem--90-ml skuSelectorItem--selected"><span class="valueWrapper">90 ml</span></div>
+              </div>
+              <span class="price">$ 328.000</span>
+            </div>
+            <div class="card">
+              <h3><a href="/dylan-blush">Dylan Blush Pink EDP 100 ml</a></h3>
+              <span class="price">$ 328.000</span>
+            </div>
+            <div class="card">
+              <h3><a href="/blue-jeans">Blue Jeans EDT 75 ml</a></h3>
+              <span class="price">$ 79.990</span>
+            </div>
+          </div>
+        </body></html>
+        "##;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(detection.products[0].name, "Crystal Emerald EDP 90 ml");
+    }
+
+    #[test]
+    fn size_from_url_when_no_sku_selector() {
+        let html = r##"
+        <html><body>
+          <div class="product-grid">
+            <div class="card">
+              <h3><a href="/funny-edt-100ml-ed-limitada-1/p">Funny EDT Ed. Limitada</a></h3>
+              <span class="price">$ 94.340</span>
+            </div>
+            <div class="card">
+              <h3><a href="/plain-product/p">Plain Product</a></h3>
+              <span class="price">$ 50.000</span>
+            </div>
+            <div class="card">
+              <h3><a href="/fresh-gold-100ml/p">Fresh Gold EDP 100 ml</a></h3>
+              <span class="price">$ 95.400</span>
+            </div>
+          </div>
+        </body></html>
+        "##;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(detection.products[0].name, "Funny EDT Ed. Limitada 100ml");
+        // No size in URL and no trailing number -> name unchanged.
+        assert_eq!(detection.products[1].name, "Plain Product");
+    }
+
+    #[test]
+    fn trailing_bare_number_gets_ml() {
+        let html = r#"
+        <html><body>
+          <div class="product-grid">
+            <div class="card"><a href="/p/light-blue-homme-edp-50.html">light blue homme edp
+              50</a><span class="price">$242.100</span></div>
+            <div class="card"><a href="/p/one-million.html">One Million EDT</a><span class="price">$266.901</span></div>
+            <div class="card"><a href="/p/paula-aura-edt-100.html">paula aura edt 100</a><span class="price">$39.060</span></div>
+          </div>
+        </body></html>
+        "#;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(detection.products[0].name, "light blue homme edp 50 ml");
+        assert_eq!(detection.products[1].name, "One Million EDT");
+        assert_eq!(detection.products[2].name, "paula aura edt 100 ml");
+    }
+
+    #[test]
+    fn existing_size_is_left_untouched() {
+        let html = r#"
+        <html><body>
+          <div class="product-grid">
+            <div class="card"><a href="/p/dylan">Dylan Blush Pink EDP 100 ml + Neceser</a><span class="price">$328.000</span></div>
+            <div class="card"><a href="/p/axe">Desodorante Axe Gold 150 ml</a><span class="price">$3.744</span></div>
+            <div class="card"><a href="/p/rexona">Rexona 132 g</a><span class="price">$4.489</span></div>
+          </div>
+        </body></html>
+        "#;
+        let detection = detect_grid(html).expect("grid should be detected");
+        assert_eq!(detection.products[0].name, "Dylan Blush Pink EDP 100 ml + Neceser");
+        assert_eq!(detection.products[1].name, "Desodorante Axe Gold 150 ml");
+        assert_eq!(detection.products[2].name, "Rexona 132 g");
     }
 }
 

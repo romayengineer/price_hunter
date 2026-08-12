@@ -9,6 +9,7 @@ use price_hunter::capture;
 use price_hunter::config;
 use price_hunter::detect;
 use price_hunter::detect::{Detection, Product};
+use price_hunter::instance::InstanceGuard;
 use price_hunter::store::Store;
 
 #[tokio::main]
@@ -22,6 +23,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let url = parse_args(&args);
     let store = connect_store()?;
+    let _instance = InstanceGuard::acquire().context("cannot take single-instance lock")?;
     let driver = browser::launch().await?;
     navigate_to_arg(&driver, url).await;
 

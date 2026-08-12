@@ -16,6 +16,11 @@ arbitrary e-commerce HTML and captures them as JSON. Uses `thirtyfour`
   `pocketbase/migrations/`.
 - `src/main.rs` — `cargo run`: opens a real, user-controlled browser and polls
   it for captures in the background.
+- `src/instance.rs` — single-instance lock via a PID file at
+  `~/.config/price_hunter/price_hunter.pid` (honors `$XDG_CONFIG_HOME`). A new
+  `cargo run` kills the previous running instance (and any orphaned
+  Chrome/chromedriver holding `profiles/chrome`) before launching its browser;
+  the file is removed on graceful exit.
 - `pocketbase/` — PocketBase migrations (JS, no SQL) + `scripts/setup_pocketbase.sh`
   for the retrieval/app layer (admin dashboard + Record APIs). Not required to
   run the scraper.
@@ -156,7 +161,9 @@ password = "change-me"          # required; first run writes a commented templat
   - `PRICE_HUNTER_LIVE_URL=<url> PRICE_HUNTER_DUMP_HTML=1 cargo test --test live_probe -- --ignored -- --nocapture`
     opens Chrome, navigates, scrolls, optionally dumps the rendered HTML, and
     prints the detected container + products.
-- Close any `cargo run` browser first — Chrome locks `profiles/chrome` while running.
+- Close any `cargo run` browser first — Chrome locks `profiles/chrome` while
+  running. A new `cargo run` now kills the previous instance automatically via
+  the PID file (`src/instance.rs`), so manual cleanup is normally unnecessary.
 
 ## Adding a new site / fixture
 There is a skill and a command for this; use them instead of improvising:
@@ -202,8 +209,9 @@ Known markup classes the detector already handles: PrestaShop
   the `WebDriver` alive until the browser window closes (probe with
   `driver.current_url()`).
 - If a browser-based test "passes" instantly with no output, a leftover Chrome
-  is probably holding `profiles/chrome` — kill it (`pkill -f profiles/chrome`)
-  and rerun.
+  is probably holding `profiles/chrome`. `cargo run` now self-heals via the PID
+  file (`src/instance.rs`); for `#[ignore]`d tests that launch their own
+  browser, kill it manually (`pkill -f profiles/chrome`) and rerun.
 - `.opencode/node_modules` is gitignored; don't touch or commit it.
 - Keep changes backward-compatible: when extending `detect.rs`, preserve the
   existing fallbacks (`current_price_of` → `prices.last()`, `card_of` descent,

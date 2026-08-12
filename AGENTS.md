@@ -134,6 +134,28 @@ password = "change-me"          # required; first run writes a commented templat
   `POCKETBASE_SUPERUSER_PASSWORD`), which serves the Record APIs. A failed
   *save* is logged and never crashes the browser session — but the startup
   *connection* is mandatory (`main` exits if it cannot connect).
+- `cargo run -- -matrix-server` serves the product × provider price matrix for
+  the local Flutter UI. Binds to `127.0.0.1:8091` (override
+  `PRICE_HUNTER_MATRIX_PORT`) and rebuilds the matrix from PocketBase on every
+  request. `GET /matrix` returns
+  `{generated_at, providers:[{id, domain, name}], rows:[{product_id, name,
+  prices:{<provider_id>: price}}]}` — one row per product with at least one
+  linked provider product (no all-blank rows), latest price per provider
+  (lowest when a product maps to several listings on one provider). The
+  blocking PocketBase queries run via `spawn_blocking` (the SDK is ureq-based,
+  not async). Requires PocketBase to be up; it uses the same config as
+  `cargo run`.
+
+## UI
+- A Flutter (macOS) app lives in the sibling repo
+  `../price_hunter_ui` (separate git repo, not part of this crate). It shows a
+  product × provider table (rows = full product name, columns = provider
+  domains, cells = latest price, blank when a provider doesn't carry the
+  product) by calling `http://127.0.0.1:8091/matrix` (URL editable in-app).
+- Run it: start PocketBase, then `cargo run -- -matrix-server`, then
+  `cd ../price_hunter_ui && flutter run -d macos`. The macOS app needs the
+  `com.apple.security.network.client` entitlement (already set in
+  `macos/Runner/{DebugProfile,Release}.entitlements`) to make outbound HTTP.
 
 ## Tests
 - `cargo test` runs the fixture-based detection tests (no network/browser needed)

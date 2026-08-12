@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use pocketbase_sdk::client::{Auth, Client};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::detect::Detection;
 
@@ -104,6 +104,44 @@ struct ProductRow {
 #[derive(Serialize, Clone)]
 struct ProductLinkPayload {
     product_id: Option<String>,
+}
+
+/// A `provider_product_prices` row used to resolve the latest price per
+/// provider product (list sorted by `-created`, keep first occurrence).
+#[derive(Default, Deserialize, Debug)]
+#[allow(dead_code)]
+struct ProviderPriceRow {
+    id: String,
+    provider_product_id: String,
+    price: f64,
+}
+
+/// One provider column in the product × provider matrix.
+#[derive(Serialize)]
+pub struct MatrixProvider {
+    pub id: String,
+    pub domain: String,
+    pub name: String,
+}
+
+/// One product row in the matrix: the full display name (brand, product_name
+/// and size joined) plus the latest price per provider id. Providers that
+/// don't carry the product are simply absent from `prices`.
+#[derive(Serialize)]
+pub struct MatrixRow {
+    pub product_id: String,
+    pub name: String,
+    pub prices: HashMap<String, f64>,
+}
+
+/// The product × provider price matrix served by `GET /matrix`. Every row has
+/// at least one linked provider product (no all-blank rows); columns include
+/// every provider.
+#[derive(Serialize)]
+pub struct Matrix {
+    pub generated_at: String,
+    pub providers: Vec<MatrixProvider>,
+    pub rows: Vec<MatrixRow>,
 }
 
 /// Payload for the `provider_product_matches` collection.
@@ -822,6 +860,110 @@ impl Store {
         }
         Ok(())
     }
+
+    /// Builds the product × provider price matrix: one row per product that has
+    /// at least one linked provider product, one column per provider, and the
+    /// latest scraped price in each cell. When a product maps to several
+    /// listings on the same provider the lowest price wins.
+    pub fn matrix(&self) -> Result<Matrix> {
+        let products = self.list_all_products()?;
+        let provider_products = self.list_provider_products()?;
+        let latest_prices = self.latest_price_per_provider_product()?;
+
+        let mut rows = matrix_rows(&products, &provider_products, &latest_prices);
+        rows.sort_by_key(|r| r.name.to_lowercase());
+
+        let mut providers = self.list_providers()?;
+        providers.sort_by_key(|p| p.domain.clone());
+        let providers = providers
+            .into_iter()
+            .map(|p| MatrixProvider {
+                id: p.id,
+                domain: p.domain,
+                name: p.name,
+            })
+            .collect();
+
+        Ok(Matrix {
+            generated_at: iso8601(now_secs()),
+            providers,
+            rows,
+        })
+    }
+
+    /// Lists every canonical product (no `active` filter — the matrix includes
+    /// retired products that still have listings).
+    fn list_all_products(&self) -> Result<Vec<ProductRow>> {
+        let mut items = Vec::new();
+        let mut page = 1;
+        loop {
+            let result = self
+                .client
+                .records(PRODUCTS_COLLECTION)
+                .list()
+                .page(page)
+                .per_page(100)
+                .call::<ProductRow>()
+                .context("could not list products")?;
+            let count = result.items.len();
+            items.extend(result.items);
+            if count < 100 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(items)
+    }
+
+    /// Lists every provider.
+    fn list_providers(&self) -> Result<Vec<ProviderRow>> {
+        let mut items = Vec::new();
+        let mut page = 1;
+        loop {
+            let result = self
+                .client
+                .records(PROVIDERS_COLLECTION)
+                .list()
+                .page(page)
+                .per_page(100)
+                .call::<ProviderRow>()
+                .context("could not list providers")?;
+            let count = result.items.len();
+            items.extend(result.items);
+            if count < 100 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(items)
+    }
+
+    /// Resolves the latest price per provider product by listing prices sorted
+    /// newest-first and keeping the first row seen for each provider product.
+    fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>> {
+        let mut prices = HashMap::new();
+        let mut page = 1;
+        loop {
+            let result = self
+                .client
+                .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
+                .list()
+                .sort("-created")
+                .page(page)
+                .per_page(500)
+                .call::<ProviderPriceRow>()
+                .context("could not list prices")?;
+            let count = result.items.len();
+            for row in result.items {
+                prices.entry(row.provider_product_id).or_insert(row.price);
+            }
+            if count < 500 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(prices)
+    }
 }
 
 fn now_secs() -> u64 {
@@ -855,6 +997,55 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Builds one matrix row per product that has at least one linked provider
+/// product, with the latest price per provider (lowest when a product maps to
+/// several listings on the same provider).
+fn matrix_rows(
+    products: &[ProductRow],
+    provider_products: &[ProviderProductRow],
+    latest_prices: &HashMap<String, f64>,
+) -> Vec<MatrixRow> {
+    let linked: HashSet<&str> = provider_products
+        .iter()
+        .filter_map(|pp| pp.product_id.as_deref())
+        .collect();
+
+    let mut rows = Vec::new();
+    for product in products {
+        if !linked.contains(product.id.as_str()) {
+            continue;
+        }
+        rows.push(MatrixRow {
+            product_id: product.id.clone(),
+            name: product.name.clone(),
+            prices: cell_prices(provider_products, &product.id, latest_prices),
+        });
+    }
+    rows
+}
+
+/// Latest price per provider for one product, taking the lowest when the
+/// product maps to several listings on the same provider.
+fn cell_prices(
+    provider_products: &[ProviderProductRow],
+    product_id: &str,
+    latest_prices: &HashMap<String, f64>,
+) -> HashMap<String, f64> {
+    provider_products
+        .iter()
+        .filter(|pp| pp.product_id.as_deref() == Some(product_id))
+        .filter_map(|pp| {
+            latest_prices
+                .get(&pp.id)
+                .map(|price| (pp.provider_id.clone(), *price))
+        })
+        .fold(HashMap::new(), |mut prices, (provider, price)| {
+            let best = prices.entry(provider).or_insert(price);
+            *best = best.min(price);
+            prices
+        })
 }
 
 fn host_of(url: &str) -> String {

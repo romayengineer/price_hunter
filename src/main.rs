@@ -21,6 +21,9 @@ async fn main() -> anyhow::Result<()> {
     if args.iter().skip(1).any(|a| a == "-match-products") {
         return match_products();
     }
+    if args.iter().skip(1).any(|a| a == "-matrix-server") {
+        return matrix_server().await;
+    }
     let url = parse_args(&args);
     let store = connect_store()?;
     let _instance = InstanceGuard::acquire().context("cannot take single-instance lock")?;
@@ -75,6 +78,14 @@ fn match_products() -> anyhow::Result<()> {
     let matched = store.match_products()?;
     println!("Done: {matched} provider products matched");
     Ok(())
+}
+
+/// Serves the product × provider price matrix on http://127.0.0.1:8091 and
+/// keeps running until interrupted.
+async fn matrix_server() -> anyhow::Result<()> {
+    config::Config::ensure_template();
+    let store = Store::connect().context("cannot connect to PocketBase")?;
+    price_hunter::matrix_server::serve(store).await
 }
 
 fn parse_args(args: &[String]) -> Option<String> {

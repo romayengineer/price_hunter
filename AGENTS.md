@@ -134,6 +134,21 @@ password = "change-me"          # required; first run writes a commented templat
   `POCKETBASE_SUPERUSER_PASSWORD`), which serves the Record APIs. A failed
   *save* is logged and never crashes the browser session — but the startup
   *connection* is mandatory (`main` exits if it cannot connect).
+- `cargo run -- -match-products` scores every (provider product × canonical
+  product) comparison and stores it in `provider_product_matches` **with any
+  score 0.0–1.0** (the `score` field is non-required so exact-zero scores are
+  storable). Comparisons already computed on a previous run are skipped — the
+  cache is the source of truth, so re-runs only compute new pairs. Each score
+  is written **immediately after it is computed** (one insert per HTTP request,
+  via a pooled `ureq::Agent` so bulk inserts reuse one TCP connection instead of
+  exhausting macOS ephemeral ports), so a crash loses no completed scores. The
+  existing comparisons are loaded per provider product with indexed filter
+  queries (a full-table OFFSET scan is ~140 ms/page and scales with the cache).
+  A `Progress: X.XX%` line is redrawn in place during the backfill. After the
+  cache is up to date, provider products are linked using stored scores ≥
+  `MIN_SCORE` (0.6). The `score` field was made non-required by migration
+  `1787000001_allow_zero_scores.js` — PocketBase treats `required` numbers as
+  blank when they are 0.
 - `cargo run -- -matrix-server` serves the product × provider price matrix for
   the local Flutter UI. Binds to `127.0.0.1:8091` (override
   `PRICE_HUNTER_MATRIX_PORT`) and rebuilds the matrix from PocketBase on every

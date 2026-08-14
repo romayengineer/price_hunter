@@ -163,6 +163,12 @@ struct ProviderMatchRow {
     status: String,
 }
 
+/// Page shape of a `provider_product_matches` list response.
+#[derive(Deserialize)]
+struct MatchListResponse {
+    items: Vec<ProviderMatchRow>,
+}
+
 /// Payload for the `provider_product_images` collection.
 #[derive(Serialize, Clone)]
 struct ProductImagePayload {
@@ -637,7 +643,8 @@ impl Store {
             .map(|p| (p.id.as_str(), p.provider_id.as_str()))
             .collect();
 
-        let stored = self.list_all_matches()?;
+        let stored = self.list_all_matches(&provider_products)?;
+        eprintln!("[dbg] stored={}", stored.len());
         let mut stored_pairs: HashSet<(String, String)> = stored
             .iter()
             .map(|r| (r.provider_product_id.clone(), r.product_id.clone()))
@@ -711,25 +718,54 @@ impl Store {
         Ok(items)
     }
 
-    /// Lists every row in `provider_product_matches`.
-    fn list_all_matches(&self) -> Result<Vec<ProviderMatchRow>> {
+    /// Lists every stored match. Loads each provider product's pairs with an
+    /// indexed filter query (`provider_product_id=<id>`, ~1-2 ms) instead of
+    /// paginating the whole table — a full OFFSET scan takes ~140 ms/page and
+    /// scales with the cache size. Requests run in parallel workers, each with
+    /// its own agent (ureq pools one connection per host by default, so a
+    /// shared agent would serialize the workers).
+    fn list_all_matches(&self, provider_products: &[ProviderProductRow]) -> Result<Vec<ProviderMatchRow>> {
+        const WORKERS: usize = 16;
+        let base = format!(
+            "{}/api/collections/{}/records",
+            self.client.base_url,
+            PROVIDER_PRODUCT_MATCHES_COLLECTION
+        );
+        let token = self
+            .client
+            .auth_token
+            .as_deref()
+            .context("not authenticated to PocketBase")?
+            .to_owned();
+        let pp_ids: Vec<String> = provider_products.iter().map(|p| p.id.clone()).collect();
         let mut items = Vec::new();
-        let mut page = 1;
-        loop {
-            let result = self
-                .client
-                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
-                .list()
-                .page(page)
-                .per_page(500)
-                .call::<ProviderMatchRow>()
-                .context("could not list matches")?;
-            let count = result.items.len();
-            items.extend(result.items);
-            if count < 500 {
-                break;
-            }
-            page += 1;
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..WORKERS)
+                .map(|w| {
+                    let base = base.clone();
+                    let token = token.clone();
+                    let pp_ids = &pp_ids;
+                    scope.spawn(move || {
+                        let agent = ureq::Agent::new();
+                        let mut out = Vec::new();
+                        for i in (w..pp_ids.len()).step_by(WORKERS) {
+                            out.extend(fetch_pp_matches(&agent, &base, &token, &pp_ids[i])?);
+                        }
+                        Ok::<Vec<ProviderMatchRow>, anyhow::Error>(out)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| anyhow::anyhow!("match loader panicked"))?
+                })
+                .collect::<Vec<Result<Vec<ProviderMatchRow>>>>()
+        });
+        for result in results {
+            items.extend(result?);
         }
         Ok(items)
     }
@@ -805,7 +841,7 @@ impl Store {
     /// Scores and stores every (provider product, product) pair not already
     /// present in `stored_pairs`, one insert at a time. New above-threshold
     /// pairs are appended to `candidates`. Returns how many comparisons were
-    /// computed.
+    /// computed. A live progress percentage is redrawn on the same line.
     fn backfill_comparisons(
         &self,
         provider_products: &[ProviderProductRow],
@@ -813,13 +849,20 @@ impl Store {
         stored_pairs: &mut HashSet<(String, String)>,
         candidates: &mut Vec<crate::matching::MatchCandidate>,
     ) -> Result<usize> {
+        let total = provider_products.len() * products.len();
         let mut inserted = 0;
+        let mut done = 0usize;
+        let mut last_pct = -1.0;
         for pp in provider_products {
             for product in products {
                 inserted +=
                     self.backfill_pair(pp, product, stored_pairs, candidates)?;
+                done += 1;
+                print_progress(done, total, &mut last_pct);
             }
         }
+        print_progress(total, total, &mut last_pct);
+        println!();
         Ok(inserted)
     }
 
@@ -1056,6 +1099,50 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Redraws a `Progress: X.XX%` line in place (carriage return) without
+/// spamming the terminal — only rewrites when the rounded percentage changes.
+fn print_progress(done: usize, total: usize, last: &mut f64) {
+    if total == 0 {
+        return;
+    }
+    let pct = done as f64 * 100.0 / total as f64;
+    if (pct - *last).abs() < 0.005 {
+        return;
+    }
+    *last = pct;
+    use std::io::Write;
+    print!("\rProgress: {pct:.2}%");
+    let _ = std::io::stdout().flush();
+}
+
+/// Fetches all stored match rows for one provider product using the unique
+/// index (a provider product maps to at most `products` rows, so a single
+/// `per_page=500` request covers it).
+fn fetch_pp_matches(
+    agent: &ureq::Agent,
+    base: &str,
+    token: &str,
+    provider_product_id: &str,
+) -> Result<Vec<ProviderMatchRow>> {
+    let filter = format!(
+        "provider_product_id='{}'",
+        escape_filter(provider_product_id)
+    );
+    let mut url = url::Url::parse(base).context("could not parse records url")?;
+    url.query_pairs_mut()
+        .append_pair("perPage", "500")
+        .append_pair("filter", &filter);
+    let res = agent
+        .get(url.as_str())
+        .set("Authorization", token)
+        .call()
+        .map_err(|e| anyhow::anyhow!("could not list matches: {e}"))?;
+    let list: MatchListResponse = res
+        .into_json()
+        .map_err(|e| anyhow::anyhow!("could not parse matches: {e}"))?;
+    Ok(list.items)
 }
 
 /// Formats a unix-seconds timestamp as the ISO-8601 string PocketBase expects

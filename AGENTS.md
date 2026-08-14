@@ -144,7 +144,9 @@ password = "change-me"          # required; first run writes a commented templat
   exhausting macOS ephemeral ports), so a crash loses no completed scores. The
   existing comparisons are loaded per provider product with indexed filter
   queries (a full-table OFFSET scan is ~140 ms/page and scales with the cache).
-  A `Progress: X.XX%` line is redrawn in place during the backfill. After the
+  A `Progress: X.XX%` line is redrawn in place during the backfill. A pair
+  that already exists (unique index — e.g. a concurrent run inserted it) is
+  reported as already computed instead of aborting with a 400. After the
   cache is up to date, provider products are linked using stored scores ≥
   `MIN_SCORE` (0.6). The `score` field was made non-required by migration
   `1787000001_allow_zero_scores.js` — PocketBase treats `required` numbers as

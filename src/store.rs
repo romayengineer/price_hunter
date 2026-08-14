@@ -169,6 +169,15 @@ struct MatchListResponse {
     items: Vec<ProviderMatchRow>,
 }
 
+/// Outcome of writing one comparison row.
+enum MatchInsert {
+    /// The row was created.
+    Created,
+    /// The pair already exists (unique index) — e.g. inserted by a concurrent
+    /// run — so it counts as already computed.
+    AlreadyExists,
+}
+
 /// Payload for the `provider_product_images` collection.
 #[derive(Serialize, Clone)]
 struct ProductImagePayload {
@@ -644,7 +653,6 @@ impl Store {
             .collect();
 
         let stored = self.list_all_matches(&provider_products)?;
-        eprintln!("[dbg] stored={}", stored.len());
         let mut stored_pairs: HashSet<(String, String)> = stored
             .iter()
             .map(|r| (r.provider_product_id.clone(), r.product_id.clone()))
@@ -771,7 +779,10 @@ impl Store {
     }
 
     /// Writes one `provider_product_matches` row for a computed comparison so
-    /// the score survives a crash even if the rest of the run does not.
+    /// the score survives a crash even if the rest of the run does not. A pair
+    /// that already exists (unique index) is reported as `AlreadyExists`
+    /// instead of failing, so a concurrent `-match-products` run can't abort
+    /// this one with a 400.
     ///
     /// Uses the pooled agent (not the SDK's one-shot HTTP calls) so hundreds of
     /// thousands of sequential inserts reuse a single TCP connection instead
@@ -781,7 +792,7 @@ impl Store {
         provider_product_id: &str,
         product_id: &str,
         score: f64,
-    ) -> Result<()> {
+    ) -> Result<MatchInsert> {
         let url = format!(
             "{}/api/collections/{}/records",
             self.client.base_url,
@@ -813,10 +824,13 @@ impl Store {
                         response.status()
                     ));
                 }
-                Ok(())
+                Ok(MatchInsert::Created)
             }
             Err(ureq::Error::Status(status, response)) => {
                 let detail = response.into_string().unwrap_or_default();
+                if status == 400 && detail.contains("validation_not_unique") {
+                    return Ok(MatchInsert::AlreadyExists);
+                }
                 Err(anyhow::anyhow!(
                     "could not write match: HTTP {status} body: {detail} (pair {provider_product_id} x {product_id})",
                 ))
@@ -868,7 +882,8 @@ impl Store {
 
     /// Scores one pair unless it is already stored, writing the score
     /// immediately. Returns 1 when a new comparison was computed, 0 when the
-    /// pair was already cached.
+    /// pair was already cached (including when another process just inserted
+    /// it).
     fn backfill_pair(
         &self,
         pp: &ProviderProductRow,
@@ -881,7 +896,10 @@ impl Store {
             return Ok(0);
         }
         let score = crate::matching::similarity(&pp.name, &product.name);
-        self.create_match(&pair.0, &pair.1, score)?;
+        let created = matches!(
+            self.create_match(&pair.0, &pair.1, score)?,
+            MatchInsert::Created
+        );
         stored_pairs.insert(pair);
         if score >= crate::matching::MIN_SCORE {
             candidates.push(crate::matching::MatchCandidate {
@@ -890,7 +908,7 @@ impl Store {
                 score,
             });
         }
-        Ok(1)
+        Ok(usize::from(created))
     }
 
     /// Greedily assigns canonical products within each provider group, sets

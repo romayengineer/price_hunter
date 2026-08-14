@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use pocketbase_sdk::client::{Auth, Client};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::detect::Detection;
 
@@ -157,6 +157,10 @@ struct ProviderMatchPayload {
 #[allow(dead_code)]
 struct ProviderMatchRow {
     id: String,
+    provider_product_id: String,
+    product_id: String,
+    score: f64,
+    status: String,
 }
 
 /// Payload for the `provider_product_images` collection.
@@ -203,6 +207,10 @@ struct ProviderPricePayload {
 /// (superusers bypass collection rules, so no app user is required).
 pub struct Store {
     client: Client<Auth>,
+    /// Pooled HTTP client used for hot paths (e.g. bulk match inserts) where
+    /// the SDK's one-shot `ureq::get/post` calls would open a fresh TCP
+    /// connection per request and exhaust macOS ephemeral ports.
+    agent: ureq::Agent,
 }
 
 impl Store {
@@ -229,7 +237,10 @@ impl Store {
             .map_err(|e| {
                 anyhow::anyhow!("could not authenticate to PocketBase at {base_url}: {e}")
             })?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            agent: ureq::Agent::new(),
+        })
     }
 
     /// Persists one detection through the Record API:
@@ -611,11 +622,13 @@ impl Store {
     }
 
     /// Runs the fuzzy matcher between provider products and canonical
-    /// products. Recomputes from scratch: existing matches and product links
-    /// are cleared, all above-threshold comparisons are written to
-    /// `provider_product_matches`, and the best match per provider product is
-    /// linked (per-provider exclusivity). Returns how many provider products
-    /// were matched.
+    /// products. Every (provider product, canonical product) comparison is
+    /// scored and stored in `provider_product_matches` — pairs already
+    /// computed on a previous run are skipped, and each new score is written
+    /// immediately (one insert at a time) so a crash never loses progress.
+    /// After the cache is up to date, the best match per provider product is
+    /// linked (per-provider exclusivity) using the stored scores at or above
+    /// `MIN_SCORE`. Returns how many provider products were matched.
     pub fn match_products(&self) -> Result<usize> {
         let products = self.list_products()?;
         let provider_products = self.list_provider_products()?;
@@ -623,24 +636,26 @@ impl Store {
             .iter()
             .map(|p| (p.id.as_str(), p.provider_id.as_str()))
             .collect();
-        let candidates = crate::matching::above_threshold(
-            &provider_products
-                .iter()
-                .map(|p| crate::matching::ProviderProduct {
-                    id: p.id.clone(),
-                    name: p.name.clone(),
-                })
-                .collect::<Vec<_>>(),
-            &products
-                .iter()
-                .map(|p| crate::matching::Product {
-                    id: p.id.clone(),
-                    full_name: p.name.clone(),
-                })
-                .collect::<Vec<_>>(),
-        );
-        self.clear_previous_matches(&provider_products)?;
-        self.write_candidates(&candidates)?;
+
+        let stored = self.list_all_matches()?;
+        let mut stored_pairs: HashSet<(String, String)> = stored
+            .iter()
+            .map(|r| (r.provider_product_id.clone(), r.product_id.clone()))
+            .collect();
+        let mut candidates: Vec<crate::matching::MatchCandidate> = stored
+            .iter()
+            .filter(|r| r.score >= crate::matching::MIN_SCORE)
+            .map(|r| crate::matching::MatchCandidate {
+                provider_product_id: r.provider_product_id.clone(),
+                product_id: r.product_id.clone(),
+                score: r.score,
+            })
+            .collect();
+
+        let inserted = self.backfill_comparisons(&provider_products, &products, &mut stored_pairs, &mut candidates)?;
+        println!("Computed {inserted} new comparisons ({} already stored)", stored.len());
+
+        self.unlink_all(&provider_products)?;
         let matched = self.link_winners(&candidates, &provider_of)?;
         println!(
             "Matched {matched} of {} provider products",
@@ -696,10 +711,87 @@ impl Store {
         Ok(items)
     }
 
-    /// Clears every existing match row and nulls out `product_id` on all
-    /// provider products so the matcher recomputes from scratch.
-    fn clear_previous_matches(&self, provider_products: &[ProviderProductRow]) -> Result<()> {
-        self.delete_all_matches()?;
+    /// Lists every row in `provider_product_matches`.
+    fn list_all_matches(&self) -> Result<Vec<ProviderMatchRow>> {
+        let mut items = Vec::new();
+        let mut page = 1;
+        loop {
+            let result = self
+                .client
+                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
+                .list()
+                .page(page)
+                .per_page(500)
+                .call::<ProviderMatchRow>()
+                .context("could not list matches")?;
+            let count = result.items.len();
+            items.extend(result.items);
+            if count < 500 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(items)
+    }
+
+    /// Writes one `provider_product_matches` row for a computed comparison so
+    /// the score survives a crash even if the rest of the run does not.
+    ///
+    /// Uses the pooled agent (not the SDK's one-shot HTTP calls) so hundreds of
+    /// thousands of sequential inserts reuse a single TCP connection instead
+    /// of exhausting the OS ephemeral port range.
+    fn create_match(
+        &self,
+        provider_product_id: &str,
+        product_id: &str,
+        score: f64,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/api/collections/{}/records",
+            self.client.base_url,
+            PROVIDER_PRODUCT_MATCHES_COLLECTION
+        );
+        let token = self
+            .client
+            .auth_token
+            .as_deref()
+            .context("not authenticated to PocketBase")?;
+        let body = serde_json::to_string(&ProviderMatchPayload {
+            provider_product_id: provider_product_id.to_string(),
+            product_id: product_id.to_string(),
+            score,
+            status: "pending".to_string(),
+        })
+        .context("could not serialize match")?;
+        let response = self
+            .agent
+            .post(&url)
+            .set("Authorization", token)
+            .set("Content-Type", "application/json")
+            .send_string(&body);
+        match response {
+            Ok(response) => {
+                if !(200..300).contains(&response.status()) {
+                    return Err(anyhow::anyhow!(
+                        "could not write match: HTTP {} (pair {provider_product_id} x {product_id})",
+                        response.status()
+                    ));
+                }
+                Ok(())
+            }
+            Err(ureq::Error::Status(status, response)) => {
+                let detail = response.into_string().unwrap_or_default();
+                Err(anyhow::anyhow!(
+                    "could not write match: HTTP {status} body: {detail} (pair {provider_product_id} x {product_id})",
+                ))
+            }
+            Err(e) => Err(anyhow::anyhow!("could not write match: {e}")),
+        }
+    }
+
+    /// Nulls out `product_id` on every provider product so linking can be
+    /// recomputed from the stored comparison cache. Match rows are kept.
+    fn unlink_all(&self, provider_products: &[ProviderProductRow]) -> Result<()> {
         for pp in provider_products {
             self.client
                 .records(PROVIDER_PRODUCTS_COLLECTION)
@@ -710,59 +802,52 @@ impl Store {
         Ok(())
     }
 
-    /// Deletes every row in `provider_product_matches`.
-    fn delete_all_matches(&self) -> Result<()> {
-        let match_ids = self.list_match_ids()?;
-        for id in match_ids {
-            self.client
-                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
-                .destroy(&id)
-                .call()
-                .map_err(|e| anyhow::anyhow!("could not delete match: {e}"))?;
-        }
-        Ok(())
-    }
-
-    /// Lists the ids of every row in `provider_product_matches`.
-    fn list_match_ids(&self) -> Result<Vec<String>> {
-        let mut ids = Vec::new();
-        let mut page = 1;
-        loop {
-            let result = self
-                .client
-                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
-                .list()
-                .page(page)
-                .per_page(100)
-                .call::<ProviderMatchRow>()
-                .context("could not list matches")?;
-            let count = result.items.len();
-            ids.extend(result.items.into_iter().map(|r| r.id));
-            if count < 100 {
-                break;
+    /// Scores and stores every (provider product, product) pair not already
+    /// present in `stored_pairs`, one insert at a time. New above-threshold
+    /// pairs are appended to `candidates`. Returns how many comparisons were
+    /// computed.
+    fn backfill_comparisons(
+        &self,
+        provider_products: &[ProviderProductRow],
+        products: &[ProductRow],
+        stored_pairs: &mut HashSet<(String, String)>,
+        candidates: &mut Vec<crate::matching::MatchCandidate>,
+    ) -> Result<usize> {
+        let mut inserted = 0;
+        for pp in provider_products {
+            for product in products {
+                inserted +=
+                    self.backfill_pair(pp, product, stored_pairs, candidates)?;
             }
-            page += 1;
         }
-        Ok(ids)
+        Ok(inserted)
     }
 
-    /// Writes every candidate pair to `provider_product_matches` with
-    /// `status = "pending"`.
-    fn write_candidates(&self, candidates: &[crate::matching::MatchCandidate]) -> Result<()> {
-        for c in candidates {
-            let payload = ProviderMatchPayload {
-                provider_product_id: c.provider_product_id.clone(),
-                product_id: c.product_id.clone(),
-                score: c.score,
-                status: "pending".to_string(),
-            };
-            self.client
-                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
-                .create(payload)
-                .call()
-                .map_err(|e| anyhow::anyhow!("could not write match: {e}"))?;
+    /// Scores one pair unless it is already stored, writing the score
+    /// immediately. Returns 1 when a new comparison was computed, 0 when the
+    /// pair was already cached.
+    fn backfill_pair(
+        &self,
+        pp: &ProviderProductRow,
+        product: &ProductRow,
+        stored_pairs: &mut HashSet<(String, String)>,
+        candidates: &mut Vec<crate::matching::MatchCandidate>,
+    ) -> Result<usize> {
+        let pair = (pp.id.clone(), product.id.clone());
+        if stored_pairs.contains(&pair) {
+            return Ok(0);
         }
-        Ok(())
+        let score = crate::matching::similarity(&pp.name, &product.name);
+        self.create_match(&pair.0, &pair.1, score)?;
+        stored_pairs.insert(pair);
+        if score >= crate::matching::MIN_SCORE {
+            candidates.push(crate::matching::MatchCandidate {
+                provider_product_id: pp.id.clone(),
+                product_id: product.id.clone(),
+                score,
+            });
+        }
+        Ok(1)
     }
 
     /// Greedily assigns canonical products within each provider group, sets

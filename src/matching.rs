@@ -5,18 +5,6 @@
 /// Minimum score for a provider product to be linked to a canonical product.
 pub const MIN_SCORE: f64 = 0.6;
 
-/// A provider product as seen on a site.
-pub struct ProviderProduct {
-    pub id: String,
-    pub name: String,
-}
-
-/// A canonical product from the `products` collection.
-pub struct Product {
-    pub id: String,
-    pub full_name: String,
-}
-
 /// Joins brand, name and size into one comparison string, skipping empties.
 /// The parts are space-separated so the token-based normalization in
 /// `similarity` treats them as one order-insensitive bag of tokens.
@@ -55,27 +43,6 @@ fn normalize(name: &str) -> String {
 /// Sørensen-Dice similarity between two product names (0.0–1.0).
 pub fn similarity(a: &str, b: &str) -> f64 {
     strsim::sorensen_dice(&normalize(a), &normalize(b))
-}
-
-/// Returns every (provider product, canonical product) pair whose similarity
-/// is at or above `MIN_SCORE`.
-pub fn above_threshold(
-    provider_products: &[ProviderProduct],
-    products: &[Product],
-) -> Vec<MatchCandidate> {
-    provider_products
-        .iter()
-        .flat_map(|pp| {
-            products.iter().filter_map(|product| {
-                let score = similarity(&pp.name, &product.full_name);
-                (score >= MIN_SCORE).then(|| MatchCandidate {
-                    provider_product_id: pp.id.clone(),
-                    product_id: product.id.clone(),
-                    score,
-                })
-            })
-        })
-        .collect()
 }
 
 /// Greedily assigns canonical products to provider products within one
@@ -136,19 +103,6 @@ mod tests {
         );
     }
 
-    fn sample_rows() -> (Vec<ProviderProduct>, Vec<Product>) {
-        (
-            vec![
-                ProviderProduct { id: "pp1".into(), name: "Light Blue Homme EDP 50".into() },
-                ProviderProduct { id: "pp2".into(), name: "totally unrelated".into() },
-            ],
-            vec![
-                Product { id: "p1".into(), full_name: "EDP 50 Light Blue Homme".into() },
-                Product { id: "p2".into(), full_name: "Rose Spicy EDP".into() },
-            ],
-        )
-    }
-
     #[test]
     fn full_name_joins_brand_name_and_size() {
         assert_eq!(
@@ -178,20 +132,6 @@ mod tests {
         assert!(
             brand_name_score > name_only_score,
             "including brand+size should score higher, got {brand_name_score} vs {name_only_score}"
-        );
-    }
-
-    #[test]
-    fn above_threshold_filters_low_scores() {
-        let (provider_products, products) = sample_rows();
-        let candidates = above_threshold(&provider_products, &products);
-        assert!(
-            candidates.iter().any(|c| c.product_id == "p1"),
-            "matching name should be a candidate"
-        );
-        assert!(
-            candidates.iter().all(|c| c.provider_product_id != "pp2"),
-            "low-scoring provider product should be filtered out"
         );
     }
 

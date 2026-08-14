@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use pocketbase_sdk::client::{Auth, Client};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::detect::Detection;
 
@@ -861,9 +861,9 @@ impl Store {
         Ok(())
     }
 
-    /// Builds the product × provider price matrix: one row per product that has
-    /// at least one linked provider product, one column per provider, and the
-    /// latest scraped price in each cell. When a product maps to several
+    /// Builds the product × provider price matrix: one row per product with a
+    /// price at two or more distinct providers, one column per provider, and
+    /// the latest scraped price in each cell. When a product maps to several
     /// listings on the same provider the lowest price wins.
     pub fn matrix(&self) -> Result<Matrix> {
         let products = self.list_all_products()?;
@@ -999,28 +999,24 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// Builds one matrix row per product that has at least one linked provider
-/// product, with the latest price per provider (lowest when a product maps to
-/// several listings on the same provider).
+/// Builds one matrix row per product that has a price at two or more distinct
+/// providers, with the latest price per provider (lowest when a product maps
+/// to several listings on the same provider).
 fn matrix_rows(
     products: &[ProductRow],
     provider_products: &[ProviderProductRow],
     latest_prices: &HashMap<String, f64>,
 ) -> Vec<MatrixRow> {
-    let linked: HashSet<&str> = provider_products
-        .iter()
-        .filter_map(|pp| pp.product_id.as_deref())
-        .collect();
-
     let mut rows = Vec::new();
     for product in products {
-        if !linked.contains(product.id.as_str()) {
+        let prices = cell_prices(provider_products, &product.id, latest_prices);
+        if prices.len() < 2 {
             continue;
         }
         rows.push(MatrixRow {
             product_id: product.id.clone(),
             name: product.name.clone(),
-            prices: cell_prices(provider_products, &product.id, latest_prices),
+            prices,
         });
     }
     rows

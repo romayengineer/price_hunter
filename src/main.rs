@@ -18,6 +18,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(path) = import_products_arg(&args) {
         return import_products(&path);
     }
+    if let Some(path) = export_matrix_arg(&args) {
+        return export_matrix(&path);
+    }
     if args.iter().skip(1).any(|a| a == "-match-products") {
         return match_products();
     }
@@ -60,6 +63,14 @@ fn import_products_arg(args: &[String]) -> Option<String> {
         .and_then(|i| args.get(i + 2).cloned())
 }
 
+/// Returns the target path when `-export-matrix <file>` is present.
+fn export_matrix_arg(args: &[String]) -> Option<String> {
+    args.iter()
+        .skip(1)
+        .position(|a| a == "-export-matrix")
+        .and_then(|i| args.get(i + 2).cloned())
+}
+
 /// Imports `brand,name,size` rows from a CSV into the `products` table and
 /// exits without opening a browser.
 fn import_products(path: &str) -> anyhow::Result<()> {
@@ -67,6 +78,22 @@ fn import_products(path: &str) -> anyhow::Result<()> {
     let store = Store::connect().context("cannot connect to PocketBase")?;
     let created = store.import_products_csv(std::path::Path::new(path))?;
     println!("Done: {created} products imported");
+    Ok(())
+}
+
+/// Writes the product × provider price matrix (same table the matrix server
+/// serves) to a CSV file and exits without opening a browser.
+fn export_matrix(path: &str) -> anyhow::Result<()> {
+    config::Config::ensure_template();
+    let store = Store::connect().context("cannot connect to PocketBase")?;
+    let matrix = store.matrix()?;
+    let csv = matrix.to_csv()?;
+    std::fs::write(path, csv).with_context(|| format!("could not write CSV to {path}"))?;
+    println!(
+        "Exported {} products × {} providers to {path}",
+        matrix.rows.len(),
+        matrix.providers.len()
+    );
     Ok(())
 }
 

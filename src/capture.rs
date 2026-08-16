@@ -15,6 +15,19 @@ struct Capture {
     products: Vec<Product>,
 }
 
+/// Renders a capture as pretty-printed JSON, without touching the filesystem.
+/// The disk write lives in [`write_capture`].
+pub fn render(url: &str, captured_at: u64, detection: &Detection) -> Result<String, serde_json::Error> {
+    let capture = Capture {
+        url: url.to_string(),
+        captured_at,
+        container: detection.container.clone(),
+        detected_cards: detection.products.len(),
+        products: detection.products.clone(),
+    };
+    serde_json::to_string_pretty(&capture)
+}
+
 pub fn write_capture(dir: &str, url: &str, detection: &Detection) -> PathBuf {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -22,15 +35,8 @@ pub fn write_capture(dir: &str, url: &str, detection: &Detection) -> PathBuf {
         .as_secs();
     let subdir = capture_dir(dir, url);
     let path = subdir.join(format!("capture-{now}.json"));
-    let capture = Capture {
-        url: url.to_string(),
-        captured_at: now,
-        container: detection.container.clone(),
-        detected_cards: detection.products.len(),
-        products: detection.products.clone(),
-    };
     let _ = fs::create_dir_all(&subdir);
-    if let Ok(json) = serde_json::to_string_pretty(&capture) {
+    if let Ok(json) = render(url, now, detection) {
         let _ = fs::write(&path, json);
     }
     path

@@ -42,9 +42,9 @@ pub(super) struct BrandPayload {
 
 #[derive(Default, Deserialize, Debug)]
 #[allow(dead_code)]
-pub(super) struct BrandRow {
-    pub(super) id: String,
-    pub(super) name: String,
+pub(crate) struct BrandRow {
+    pub(crate) id: String,
+    pub(crate) name: String,
 }
 
 /// Payload for the `providers` collection.
@@ -57,12 +57,12 @@ pub(super) struct ProviderPayload {
 
 #[derive(Default, Deserialize, Debug)]
 #[allow(dead_code)]
-pub(super) struct ProviderRow {
-    pub(super) id: String,
-    pub(super) domain: String,
-    pub(super) name: String,
-    pub(super) enabled: bool,
-    pub(super) default_currency: Option<String>,
+pub(crate) struct ProviderRow {
+    pub(crate) id: String,
+    pub(crate) domain: String,
+    pub(crate) name: String,
+    pub(crate) enabled: bool,
+    pub(crate) default_currency: Option<String>,
 }
 
 /// Payload for the `scrapes` collection.
@@ -94,12 +94,12 @@ pub(super) struct ProviderProductPayload {
 
 #[derive(Default, Deserialize, Debug)]
 #[allow(dead_code)]
-pub(super) struct ProviderProductRow {
-    pub(super) id: String,
-    pub(super) provider_id: String,
-    pub(super) name: String,
-    pub(super) product_id: Option<String>,
-    pub(super) brand_id: Option<String>,
+pub(crate) struct ProviderProductRow {
+    pub(crate) id: String,
+    pub(crate) provider_id: String,
+    pub(crate) name: String,
+    pub(crate) product_id: Option<String>,
+    pub(crate) brand_id: Option<String>,
 }
 
 /// A canonical product used by the fuzzy matcher. `name` already holds the
@@ -107,10 +107,10 @@ pub(super) struct ProviderProductRow {
 /// brand (also used to assign a brand to linked provider products).
 #[derive(Default, Deserialize, Debug)]
 #[allow(dead_code)]
-pub(super) struct ProductRow {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) brand: String,
+pub(crate) struct ProductRow {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) brand: String,
 }
 
 /// Payload for updating `provider_products.product_id`. A `None` value
@@ -176,12 +176,12 @@ pub(super) struct ProviderMatchPayload {
 
 #[derive(Default, Deserialize, Debug)]
 #[allow(dead_code)]
-pub(super) struct ProviderMatchRow {
-    pub(super) id: String,
-    pub(super) provider_product_id: String,
-    pub(super) product_id: String,
-    pub(super) score: f64,
-    pub(super) status: String,
+pub(crate) struct ProviderMatchRow {
+    pub(crate) id: String,
+    pub(crate) provider_product_id: String,
+    pub(crate) product_id: String,
+    pub(crate) score: f64,
+    pub(crate) status: String,
 }
 
 /// Page shape of a `provider_product_matches` list response.
@@ -191,7 +191,7 @@ pub(super) struct MatchListResponse {
 }
 
 /// Outcome of writing one comparison row.
-pub(super) enum MatchInsert {
+pub(crate) enum MatchInsert {
     /// The row was created.
     Created,
     /// The pair already exists (unique index) — e.g. inserted by a concurrent

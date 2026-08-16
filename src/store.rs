@@ -1,14 +1,12 @@
 use anyhow::{Context, Result};
 use pocketbase_sdk::client::{Auth, Client};
 
-mod brands;
-mod http;
+pub(crate) mod http;
 mod import;
 mod matching;
-mod matrix;
-mod repo;
+pub(crate) mod repo;
 mod scrape;
-mod types;
+pub(crate) mod types;
 
 #[cfg(test)]
 mod tests;

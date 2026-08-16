@@ -9,7 +9,9 @@ use price_hunter::capture;
 use price_hunter::config;
 use price_hunter::detect;
 use price_hunter::detect::{Detection, Product};
+use price_hunter::export;
 use price_hunter::instance::InstanceGuard;
+use price_hunter::services;
 use price_hunter::store::Store;
 
 #[tokio::main]
@@ -113,8 +115,8 @@ fn import_brands(path: &str) -> anyhow::Result<()> {
 fn export_matrix(path: &str) -> anyhow::Result<()> {
     config::Config::ensure_template();
     let store = Store::connect().context("cannot connect to PocketBase")?;
-    let matrix = store.matrix()?;
-    let csv = matrix.to_csv()?;
+    let matrix = services::matrix::matrix(&store)?;
+    let csv = export::matrix_to_csv(&matrix)?;
     std::fs::write(path, csv).with_context(|| format!("could not write CSV to {path}"))?;
     println!(
         "Exported {} products × {} providers to {path}",
@@ -129,7 +131,7 @@ fn export_matrix(path: &str) -> anyhow::Result<()> {
 fn match_products() -> anyhow::Result<()> {
     config::Config::ensure_template();
     let store = Store::connect().context("cannot connect to PocketBase")?;
-    let matched = store.match_products()?;
+    let matched = services::matching::match_products(&store)?;
     println!("Done: {matched} provider products matched");
     Ok(())
 }
@@ -139,7 +141,7 @@ fn match_products() -> anyhow::Result<()> {
 fn link_matches() -> anyhow::Result<()> {
     config::Config::ensure_template();
     let store = Store::connect().context("cannot connect to PocketBase")?;
-    let matched = store.link_matches()?;
+    let matched = services::matching::link_matches(&store)?;
     println!("Done: {matched} provider products matched");
     Ok(())
 }
@@ -150,7 +152,7 @@ fn link_matches() -> anyhow::Result<()> {
 fn match_brands() -> anyhow::Result<()> {
     config::Config::ensure_template();
     let store = Store::connect().context("cannot connect to PocketBase")?;
-    store.match_brands()?;
+    services::brands::match_brands(&store)?;
     println!("Done: brand matching complete");
     Ok(())
 }

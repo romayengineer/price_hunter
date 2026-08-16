@@ -1,7 +1,7 @@
 /// Formats a unix-seconds timestamp as the ISO-8601 string PocketBase expects
 /// for `date` fields (`YYYY-MM-DD HH:MM:SS.mmmZ`, UTC). The store never sends
 /// raw epoch numbers — PocketBase treats them as blank.
-pub(super) fn iso8601(secs: u64) -> String {
+pub(crate) fn iso8601(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
@@ -24,7 +24,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-pub(super) fn now_secs() -> u64 {
+pub(crate) fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

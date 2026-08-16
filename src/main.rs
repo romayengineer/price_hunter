@@ -18,6 +18,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(path) = import_products_arg(&args) {
         return import_products(&path);
     }
+    if let Some(path) = import_brands_arg(&args) {
+        return import_brands(&path);
+    }
     if let Some(path) = export_matrix_arg(&args) {
         return export_matrix(&path);
     }
@@ -66,6 +69,14 @@ fn import_products_arg(args: &[String]) -> Option<String> {
         .and_then(|i| args.get(i + 2).cloned())
 }
 
+/// Returns the CSV path when `-import-brands <file>` is present.
+fn import_brands_arg(args: &[String]) -> Option<String> {
+    args.iter()
+        .skip(1)
+        .position(|a| a == "-import-brands")
+        .and_then(|i| args.get(i + 2).cloned())
+}
+
 /// Returns the target path when `-export-matrix <file>` is present.
 fn export_matrix_arg(args: &[String]) -> Option<String> {
     args.iter()
@@ -81,6 +92,16 @@ fn import_products(path: &str) -> anyhow::Result<()> {
     let store = Store::connect().context("cannot connect to PocketBase")?;
     let created = store.import_products_csv(std::path::Path::new(path))?;
     println!("Done: {created} products imported");
+    Ok(())
+}
+
+/// Imports the canonical brand list (single CSV column) into the `brand`
+/// table and exits without opening a browser.
+fn import_brands(path: &str) -> anyhow::Result<()> {
+    config::Config::ensure_template();
+    let store = Store::connect().context("cannot connect to PocketBase")?;
+    let created = store.import_brands_csv(std::path::Path::new(path))?;
+    println!("Done: {created} brands imported");
     Ok(())
 }
 

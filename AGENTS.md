@@ -134,6 +134,12 @@ password = "change-me"          # required; first run writes a commented templat
   `POCKETBASE_SUPERUSER_PASSWORD`), which serves the Record APIs. A failed
   *save* is logged and never crashes the browser session — but the startup
   *connection* is mandatory (`main` exits if it cannot connect).
+- `cargo run -- -import-brands <file.csv>` imports the canonical brand list
+  (one column, brand name) into the `brand` collection. A leading `brand`
+  header row, empty rows and duplicates are skipped; the unique index on
+  `name` backstops idempotency. The collection is created by migration
+  `1787000002_brand.js` and is intended for later use in flagging
+  provider_products whose names contain no known brand.
 - `cargo run -- -match-products` scores every (provider product × canonical
   product) comparison and stores it in `provider_product_matches` **with any
   score 0.0–1.0** (the `score` field is non-required so exact-zero scores are

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 pub(super) const PRODUCTS_COLLECTION: &str = "products";
+pub(super) const BRANDS_COLLECTION: &str = "brand";
 pub(super) const PROVIDERS_COLLECTION: &str = "providers";
 pub(super) const SCRAPES_COLLECTION: &str = "scrapes";
 pub(super) const PROVIDER_PRODUCTS_COLLECTION: &str = "provider_products";
@@ -31,6 +32,18 @@ pub(super) struct ProductImportRow {
 pub(super) enum RowOutcome {
     Created,
     Skipped,
+}
+
+/// Payload for the `brand` collection.
+#[derive(Serialize, Clone)]
+pub(super) struct BrandPayload {
+    pub(super) name: String,
+}
+
+#[derive(Default, Deserialize, Debug)]
+#[allow(dead_code)]
+pub(super) struct BrandRow {
+    pub(super) id: String,
 }
 
 /// Payload for the `providers` collection.

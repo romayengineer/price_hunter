@@ -22,10 +22,6 @@ impl Store {
     pub fn match_products(&self) -> Result<usize> {
         let products = self.list_products()?;
         let provider_products = self.list_provider_products()?;
-        let provider_of: HashMap<&str, &str> = provider_products
-            .iter()
-            .map(|p| (p.id.as_str(), p.provider_id.as_str()))
-            .collect();
 
         let stored = self.list_all_matches(&provider_products)?;
         let mut stored_pairs: HashSet<(String, String)> = stored
@@ -45,13 +41,69 @@ impl Store {
         let inserted = self.backfill_comparisons(&provider_products, &products, &mut stored_pairs, &mut candidates)?;
         println!("Computed {inserted} new comparisons ({} already stored)", stored.len());
 
-        self.unlink_all(&provider_products)?;
-        let matched = self.link_winners(&candidates, &provider_of)?;
+        self.finish_linking(&provider_products, &candidates)
+    }
+
+    /// Re-links provider products to canonical products using only the
+    /// comparisons already stored in `provider_product_matches` (no backfill).
+    /// A quick way to refresh links after scraping new data without waiting
+    /// for the full comparison pass — an interrupted `-match-products` can no
+    /// longer leave the matrix stale.
+    pub fn link_matches(&self) -> Result<usize> {
+        let provider_products = self.list_provider_products()?;
+        let candidates = self.list_above_threshold_candidates()?;
+        self.finish_linking(&provider_products, &candidates)
+    }
+
+    /// Clears `product_id` on every provider product and re-assigns winners
+    /// from `candidates`, printing how many provider products were matched.
+    fn finish_linking(
+        &self,
+        provider_products: &[ProviderProductRow],
+        candidates: &[crate::matching::MatchCandidate],
+    ) -> Result<usize> {
+        let provider_of: HashMap<&str, &str> = provider_products
+            .iter()
+            .map(|p| (p.id.as_str(), p.provider_id.as_str()))
+            .collect();
+        self.unlink_all(provider_products)?;
+        let matched = self.link_winners(candidates, &provider_of)?;
         println!(
             "Matched {matched} of {} provider products",
             provider_products.len()
         );
         Ok(matched)
+    }
+
+    /// Loads every stored comparison at or above `MIN_SCORE` as linking
+    /// candidates (filtered server-side, so it stays small even as the full
+    /// comparison cache grows to millions of rows).
+    fn list_above_threshold_candidates(&self) -> Result<Vec<crate::matching::MatchCandidate>> {
+        let filter = format!("score>={}", crate::matching::MIN_SCORE);
+        let mut candidates = Vec::new();
+        let mut page = 1;
+        loop {
+            let result = self
+                .client
+                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
+                .list()
+                .filter(&filter)
+                .page(page)
+                .per_page(500)
+                .call::<ProviderMatchRow>()
+                .context("could not list candidates")?;
+            let count = result.items.len();
+            candidates.extend(result.items.into_iter().map(|r| crate::matching::MatchCandidate {
+                provider_product_id: r.provider_product_id,
+                product_id: r.product_id,
+                score: r.score,
+            }));
+            if count < 500 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(candidates)
     }
 
     /// Lists every canonical product with `active = true`.

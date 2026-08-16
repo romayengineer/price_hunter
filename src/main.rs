@@ -24,6 +24,9 @@ async fn main() -> anyhow::Result<()> {
     if args.iter().skip(1).any(|a| a == "-match-products") {
         return match_products();
     }
+    if args.iter().skip(1).any(|a| a == "-link-matches") {
+        return link_matches();
+    }
     if args.iter().skip(1).any(|a| a == "-matrix-server") {
         return matrix_server().await;
     }
@@ -103,6 +106,16 @@ fn match_products() -> anyhow::Result<()> {
     config::Config::ensure_template();
     let store = Store::connect().context("cannot connect to PocketBase")?;
     let matched = store.match_products()?;
+    println!("Done: {matched} provider products matched");
+    Ok(())
+}
+
+/// Re-links provider products from already-stored comparisons (no backfill)
+/// and exits without opening a browser.
+fn link_matches() -> anyhow::Result<()> {
+    config::Config::ensure_template();
+    let store = Store::connect().context("cannot connect to PocketBase")?;
+    let matched = store.link_matches()?;
     println!("Done: {matched} provider products matched");
     Ok(())
 }

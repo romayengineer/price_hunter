@@ -151,6 +151,13 @@ password = "change-me"          # required; first run writes a commented templat
   `MIN_SCORE` (0.6). The `score` field was made non-required by migration
   `1787000001_allow_zero_scores.js` — PocketBase treats `required` numbers as
   blank when they are 0.
+- `cargo run -- -link-matches` re-links provider products to canonical products
+  using **only the already-stored comparisons** (queries just the `score >=
+  MIN_SCORE` subset — no backfill, completes in seconds). Use it to refresh
+  links after scraping new data when you don't want to wait for a full
+  `-match-products` pass. This is what keeps the matrix/CSV populated; a full
+  run interrupted during the long backfill leaves the old links stale and the
+  matrix empty.
 - `cargo run -- -matrix-server` serves the product × provider price matrix for
   the local Flutter UI. Binds to `127.0.0.1:8091` (override
   `PRICE_HUNTER_MATRIX_PORT`) and rebuilds the matrix from PocketBase on every

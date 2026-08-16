@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
+
+use crate::domain::model::ProviderMatchRow;
 
 pub(super) const PRODUCTS_COLLECTION: &str = "products";
 pub(super) const BRANDS_COLLECTION: &str = "brand";
@@ -40,29 +40,12 @@ pub(super) struct BrandPayload {
     pub(super) name: String,
 }
 
-#[derive(Default, Deserialize, Debug)]
-#[allow(dead_code)]
-pub(crate) struct BrandRow {
-    pub(crate) id: String,
-    pub(crate) name: String,
-}
-
 /// Payload for the `providers` collection.
 #[derive(Serialize, Clone)]
 pub(super) struct ProviderPayload {
     pub(super) domain: String,
     pub(super) name: String,
     pub(super) enabled: bool,
-}
-
-#[derive(Default, Deserialize, Debug)]
-#[allow(dead_code)]
-pub(crate) struct ProviderRow {
-    pub(crate) id: String,
-    pub(crate) domain: String,
-    pub(crate) name: String,
-    pub(crate) enabled: bool,
-    pub(crate) default_currency: Option<String>,
 }
 
 /// Payload for the `scrapes` collection.
@@ -92,27 +75,6 @@ pub(super) struct ProviderProductPayload {
     pub(super) last_seen_at: String,
 }
 
-#[derive(Default, Deserialize, Debug)]
-#[allow(dead_code)]
-pub(crate) struct ProviderProductRow {
-    pub(crate) id: String,
-    pub(crate) provider_id: String,
-    pub(crate) name: String,
-    pub(crate) product_id: Option<String>,
-    pub(crate) brand_id: Option<String>,
-}
-
-/// A canonical product used by the fuzzy matcher. `name` already holds the
-/// full display name (brand + product_name + size); `brand` is the canonical
-/// brand (also used to assign a brand to linked provider products).
-#[derive(Default, Deserialize, Debug)]
-#[allow(dead_code)]
-pub(crate) struct ProductRow {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) brand: String,
-}
-
 /// Payload for updating `provider_products.product_id`. A `None` value
 /// serializes as `null`, clearing the relation.
 #[derive(Serialize, Clone)]
@@ -137,34 +99,6 @@ pub(super) struct ProviderPriceRow {
     pub(super) price: f64,
 }
 
-/// One provider column in the product × provider matrix.
-#[derive(Serialize)]
-pub struct MatrixProvider {
-    pub id: String,
-    pub domain: String,
-    pub name: String,
-}
-
-/// One product row in the matrix: the full display name (brand, product_name
-/// and size joined) plus the latest price per provider id. Providers that
-/// don't carry the product are simply absent from `prices`.
-#[derive(Serialize)]
-pub struct MatrixRow {
-    pub product_id: String,
-    pub name: String,
-    pub prices: HashMap<String, f64>,
-}
-
-/// The product × provider price matrix served by `GET /matrix`. Every row has
-/// at least one linked provider product (no all-blank rows); columns include
-/// every provider.
-#[derive(Serialize)]
-pub struct Matrix {
-    pub generated_at: String,
-    pub providers: Vec<MatrixProvider>,
-    pub rows: Vec<MatrixRow>,
-}
-
 /// Payload for the `provider_product_matches` collection.
 #[derive(Serialize, Clone)]
 pub(super) struct ProviderMatchPayload {
@@ -174,29 +108,10 @@ pub(super) struct ProviderMatchPayload {
     pub(super) status: String,
 }
 
-#[derive(Default, Deserialize, Debug)]
-#[allow(dead_code)]
-pub(crate) struct ProviderMatchRow {
-    pub(crate) id: String,
-    pub(crate) provider_product_id: String,
-    pub(crate) product_id: String,
-    pub(crate) score: f64,
-    pub(crate) status: String,
-}
-
 /// Page shape of a `provider_product_matches` list response.
 #[derive(Deserialize)]
 pub(super) struct MatchListResponse {
     pub(super) items: Vec<ProviderMatchRow>,
-}
-
-/// Outcome of writing one comparison row.
-pub(crate) enum MatchInsert {
-    /// The row was created.
-    Created,
-    /// The pair already exists (unique index) — e.g. inserted by a concurrent
-    /// run — so it counts as already computed.
-    AlreadyExists,
 }
 
 /// Payload for the `provider_product_images` collection.
@@ -238,7 +153,7 @@ pub(super) struct ProviderPricePayload {
 #[allow(clippy::cognitive_complexity)]
 mod tests {
     use super::*;
-    use crate::store::http::iso8601;
+    use crate::domain::time::iso8601;
 
     #[test]
     fn scrape_payload_serializes_detection_fields() {
@@ -274,10 +189,7 @@ mod tests {
         };
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(json["provider_id"], "prov-1");
-        assert_eq!(
-            json["provider_product_url"],
-            "/a/light-blue-homme-edp-50"
-        );
+        assert_eq!(json["provider_product_url"], "/a/light-blue-homme-edp-50");
         assert_eq!(json["name"], "");
         assert_eq!(json["last_seen_at"], "1970-01-02 10:17:36.000Z");
     }

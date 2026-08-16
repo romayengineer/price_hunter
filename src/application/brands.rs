@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
-use crate::store::types::ProviderProductRow;
-use crate::store::Store;
+use crate::domain::matching::{BRAND_MIN_SCORE, best_match, brand_coverage};
+use crate::domain::model::ProviderProductRow;
+use crate::domain::ports::PriceStore;
 
 /// Result of one `-match-brands` run.
 pub struct BrandMatchSummary {
@@ -19,7 +20,7 @@ pub struct BrandMatchSummary {
 /// fuzzy-matched against the brand table by token coverage. Unresolved
 /// products keep `brand_id = null` so they can be found and their brands
 /// added to the table.
-pub fn match_brands(store: &Store) -> Result<BrandMatchSummary> {
+pub fn match_brands(store: &impl PriceStore) -> Result<BrandMatchSummary> {
     let provider_products = store.list_provider_products()?;
     let products = store.list_products()?;
     let brands = store.list_brands()?;
@@ -76,7 +77,7 @@ enum BrandSource {
 /// Resolves and writes the brand for one provider product, reporting the
 /// match source and whether `brand_id` changed (1 = changed).
 fn assign_brand(
-    store: &Store,
+    store: &impl PriceStore,
     pp: &ProviderProductRow,
     product_brand: &HashMap<&str, Option<&str>>,
     brand_candidates: &[(String, String)],
@@ -117,11 +118,5 @@ fn resolve_brand<'a>(
     {
         return product_brand.get(product_id).copied().flatten();
     }
-    crate::matching::best_match(
-        &pp.name,
-        brand_candidates,
-        crate::matching::brand_coverage,
-        crate::matching::BRAND_MIN_SCORE,
-    )
-    .map(|(id, _, _)| id)
+    best_match(&pp.name, brand_candidates, brand_coverage, BRAND_MIN_SCORE).map(|(id, _, _)| id)
 }

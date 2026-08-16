@@ -87,8 +87,7 @@ fn env_base_url() -> String {
 }
 
 fn env_password() -> String {
-    std::env::var("POCKETBASE_SUPERUSER_PASSWORD")
-        .unwrap_or_else(|_| "changeme".to_string())
+    std::env::var("POCKETBASE_SUPERUSER_PASSWORD").unwrap_or_else(|_| "changeme".to_string())
 }
 
 /// Round-trips a detection through the PocketBase Record API against the
@@ -187,7 +186,11 @@ fn save_round_trips_through_the_api() {
         "price with detected currency should land, got {:?}",
         prices.items
     );
-    assert_eq!(count_prices(), 1, "first save records one price per product");
+    assert_eq!(
+        count_prices(),
+        1,
+        "first save records one price per product"
+    );
 
     store
         .save(url, 123457, &capture_path, &sample_detection())
@@ -246,12 +249,18 @@ fn save_round_trips_through_the_api() {
         .call::<ImageRow>()
         .expect("list product images");
     assert!(
-        images.items.iter().any(|i| i.url == "https://cdn.example/img/1.jpg" && i.is_primary),
+        images
+            .items
+            .iter()
+            .any(|i| i.url == "https://cdn.example/img/1.jpg" && i.is_primary),
         "primary image should land, got {:?}",
         images.items
     );
     assert!(
-        images.items.iter().all(|i| i.url == "https://cdn.example/img/1.jpg"),
+        images
+            .items
+            .iter()
+            .all(|i| i.url == "https://cdn.example/img/1.jpg"),
         "image rows should be keyed by url (no duplicates), got {:?}",
         images.items
     );

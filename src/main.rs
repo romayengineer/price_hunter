@@ -16,7 +16,9 @@ use price_hunter::store::Store;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init().ok();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init()
+        .ok();
     let args: Vec<String> = env::args().collect();
     if let Some(path) = import_products_arg(&args) {
         return import_products(&path);

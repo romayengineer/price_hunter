@@ -128,7 +128,10 @@ mod tests {
             normalize("Light Blue Homme EDP 50"),
             normalize("edp 50 light blue homme")
         );
-        assert_eq!(normalize("Adn Neroli Ectasy!!"), normalize("adn neroli ectasy"));
+        assert_eq!(
+            normalize("Adn Neroli Ectasy!!"),
+            normalize("adn neroli ectasy")
+        );
     }
 
     #[test]
@@ -159,8 +162,14 @@ mod tests {
 
     #[test]
     fn full_name_skips_missing_parts() {
-        assert_eq!(full_name("diesel", "fuel for life edt", ""), "diesel fuel for life edt");
-        assert_eq!(full_name("", "adn neroli ecstasy", ""), "adn neroli ecstasy");
+        assert_eq!(
+            full_name("diesel", "fuel for life edt", ""),
+            "diesel fuel for life edt"
+        );
+        assert_eq!(
+            full_name("", "adn neroli ecstasy", ""),
+            "adn neroli ecstasy"
+        );
     }
 
     #[test]
@@ -184,16 +193,36 @@ mod tests {
     #[test]
     fn assign_group_picks_highest_and_does_not_reuse_products() {
         let candidates = vec![
-            MatchCandidate { provider_product_id: "pp1".into(), product_id: "p1".into(), score: 0.8 },
-            MatchCandidate { provider_product_id: "pp1".into(), product_id: "p2".into(), score: 0.9 },
-            MatchCandidate { provider_product_id: "pp2".into(), product_id: "p1".into(), score: 0.95 },
+            MatchCandidate {
+                provider_product_id: "pp1".into(),
+                product_id: "p1".into(),
+                score: 0.8,
+            },
+            MatchCandidate {
+                provider_product_id: "pp1".into(),
+                product_id: "p2".into(),
+                score: 0.9,
+            },
+            MatchCandidate {
+                provider_product_id: "pp2".into(),
+                product_id: "p1".into(),
+                score: 0.95,
+            },
         ];
         let winners = assign_group(&candidates);
         assert_eq!(
             winners,
             vec![
-                MatchCandidate { provider_product_id: "pp2".into(), product_id: "p1".into(), score: 0.95 },
-                MatchCandidate { provider_product_id: "pp1".into(), product_id: "p2".into(), score: 0.9 },
+                MatchCandidate {
+                    provider_product_id: "pp2".into(),
+                    product_id: "p1".into(),
+                    score: 0.95
+                },
+                MatchCandidate {
+                    provider_product_id: "pp1".into(),
+                    product_id: "p2".into(),
+                    score: 0.9
+                },
             ]
         );
     }
@@ -201,9 +230,15 @@ mod tests {
     #[test]
     fn brand_coverage_matches_embedded_brand() {
         assert_eq!(brand_coverage("Kevin Black EDT 100 Ml", "kevin"), 1.0);
-        assert_eq!(brand_coverage("Puro Giesso Mujer EDT 100 Ml", "giesso"), 1.0);
         assert_eq!(
-            brand_coverage("adolfo dominguez adn neroli ecstasy 100 ml", "adolfo dominguez"),
+            brand_coverage("Puro Giesso Mujer EDT 100 Ml", "giesso"),
+            1.0
+        );
+        assert_eq!(
+            brand_coverage(
+                "adolfo dominguez adn neroli ecstasy 100 ml",
+                "adolfo dominguez"
+            ),
             1.0
         );
         assert_eq!(brand_coverage("some unrelated name", "diesel"), 0.0);
@@ -232,7 +267,13 @@ mod tests {
         assert_eq!(score, 1.0);
 
         assert!(
-            best_match("completely unrelated", &candidates, brand_coverage, BRAND_MIN_SCORE).is_none()
+            best_match(
+                "completely unrelated",
+                &candidates,
+                brand_coverage,
+                BRAND_MIN_SCORE
+            )
+            .is_none()
         );
     }
 }

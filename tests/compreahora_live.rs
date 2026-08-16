@@ -25,13 +25,10 @@ async fn run() -> WebDriverResult<()> {
 }
 
 async fn run_with(driver: &WebDriver) -> WebDriverResult<()> {
-    driver
-        .goto(COMPREAHORA_URL)
-        .await
-        .map_err(|e| {
-            eprintln!("failed to navigate to {COMPREAHORA_URL}: {e}");
-            e
-        })?;
+    driver.goto(COMPREAHORA_URL).await.map_err(|e| {
+        eprintln!("failed to navigate to {COMPREAHORA_URL}: {e}");
+        e
+    })?;
 
     let products = wait_for_products(driver, Duration::from_secs(30)).await?;
     dump_html_if_requested(driver).await?;

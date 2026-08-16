@@ -1,29 +1,153 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
 
 use super::Store;
 use super::http::escape_filter;
 use super::types::{
-    PROVIDER_PRODUCTS_COLLECTION, PROVIDER_PRODUCT_MATCHES_COLLECTION,
-    MatchInsert, MatchListResponse, ProductLinkPayload, ProviderMatchPayload,
-    ProviderMatchRow, ProviderProductRow,
+    BRANDS_COLLECTION, BrandLinkPayload, MatchListResponse, PRODUCTS_COLLECTION,
+    PROVIDER_PRODUCT_MATCHES_COLLECTION, PROVIDER_PRODUCT_PRICES_COLLECTION,
+    PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION, ProductLinkPayload, ProviderMatchPayload,
+    ProviderPriceRow,
 };
+use crate::domain::matching::{MIN_SCORE, MatchCandidate};
+use crate::domain::model::{
+    BrandRow, MatchInsert, ProductRow, ProviderMatchRow, ProviderProductRow, ProviderRow,
+};
+use crate::domain::ports::PriceStore;
 
 impl Store {
+    /// Lists every record of `collection` with an optional filter and sort,
+    /// paginating `per_page` rows at a time until the collection is exhausted.
+    /// Keeps the page/per_page loop in one place instead of duplicating it in
+    /// every bulk-loading path.
+    pub(crate) fn list_all<T>(
+        &self,
+        collection: &'static str,
+        filter: Option<&str>,
+        sort: Option<&str>,
+        per_page: usize,
+    ) -> Result<Vec<T>>
+    where
+        T: Default + DeserializeOwned,
+    {
+        let mut items = Vec::new();
+        let mut page = 1;
+        loop {
+            let mut builder = self
+                .client
+                .records(collection)
+                .list()
+                .page(page)
+                .per_page(per_page as i32);
+            if let Some(filter) = filter {
+                builder = builder.filter(filter);
+            }
+            if let Some(sort) = sort {
+                builder = builder.sort(sort);
+            }
+            let result = builder
+                .call::<T>()
+                .with_context(|| format!("could not list {collection}"))?;
+            let count = result.items.len();
+            items.extend(result.items);
+            if count < per_page {
+                break;
+            }
+            page += 1;
+        }
+        Ok(items)
+    }
+
+    /// Marks the match row for `(provider_product_id, product_id)` as
+    /// confirmed.
+    pub(crate) fn mark_confirmed(&self, winner: &MatchCandidate) -> Result<()> {
+        let filter = format!(
+            "provider_product_id='{}' && product_id='{}'",
+            escape_filter(&winner.provider_product_id),
+            escape_filter(&winner.product_id)
+        );
+        let existing = self
+            .client
+            .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
+            .list()
+            .filter(&filter)
+            .per_page(1)
+            .call::<ProviderMatchRow>()
+            .context("could not look up match")?;
+        if let Some(row) = existing.items.into_iter().next() {
+            self.client
+                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
+                .update(
+                    &row.id,
+                    ProviderMatchPayload {
+                        provider_product_id: winner.provider_product_id.clone(),
+                        product_id: winner.product_id.clone(),
+                        score: winner.score,
+                        status: "confirmed".to_string(),
+                    },
+                )
+                .call()
+                .map_err(|e| anyhow::anyhow!("could not confirm match: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
+impl PriceStore for Store {
+    fn list_products(&self) -> Result<Vec<ProductRow>> {
+        self.list_all(PRODUCTS_COLLECTION, Some("active=true"), None, 100)
+    }
+
+    fn list_all_products(&self) -> Result<Vec<ProductRow>> {
+        self.list_all(PRODUCTS_COLLECTION, None, None, 100)
+    }
+
+    fn list_provider_products(&self) -> Result<Vec<ProviderProductRow>> {
+        self.list_all(PROVIDER_PRODUCTS_COLLECTION, None, None, 100)
+    }
+
+    fn list_providers(&self) -> Result<Vec<ProviderRow>> {
+        self.list_all(PROVIDERS_COLLECTION, None, None, 100)
+    }
+
+    fn list_brands(&self) -> Result<Vec<BrandRow>> {
+        self.list_all(BRANDS_COLLECTION, None, None, 500)
+    }
+
+    fn list_above_threshold_candidates(&self) -> Result<Vec<MatchCandidate>> {
+        let filter = format!("score>={MIN_SCORE}");
+        let rows = self.list_all::<ProviderMatchRow>(
+            PROVIDER_PRODUCT_MATCHES_COLLECTION,
+            Some(&filter),
+            None,
+            500,
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|r| MatchCandidate {
+                provider_product_id: r.provider_product_id,
+                product_id: r.product_id,
+                score: r.score,
+            })
+            .collect())
+    }
+
     /// Lists every stored match. Loads each provider product's pairs with an
     /// indexed filter query (`provider_product_id=<id>`, ~1-2 ms) instead of
     /// paginating the whole table — a full OFFSET scan takes ~140 ms/page and
     /// scales with the cache size. Requests run in parallel workers, each with
     /// its own agent (ureq pools one connection per host by default, so a
     /// shared agent would serialize the workers).
-    pub(crate) fn list_all_matches(
+    fn list_all_matches(
         &self,
         provider_products: &[ProviderProductRow],
     ) -> Result<Vec<ProviderMatchRow>> {
         const WORKERS: usize = 16;
         let base = format!(
             "{}/api/collections/{}/records",
-            self.client.base_url,
-            PROVIDER_PRODUCT_MATCHES_COLLECTION
+            self.client.base_url, PROVIDER_PRODUCT_MATCHES_COLLECTION
         );
         let token = self
             .client
@@ -73,7 +197,7 @@ impl Store {
     /// Uses the pooled agent (not the SDK's one-shot HTTP calls) so hundreds of
     /// thousands of sequential inserts reuse a single TCP connection instead
     /// of exhausting the OS ephemeral port range.
-    pub(crate) fn create_match(
+    fn create_match(
         &self,
         provider_product_id: &str,
         product_id: &str,
@@ -81,8 +205,7 @@ impl Store {
     ) -> Result<MatchInsert> {
         let url = format!(
             "{}/api/collections/{}/records",
-            self.client.base_url,
-            PROVIDER_PRODUCT_MATCHES_COLLECTION
+            self.client.base_url, PROVIDER_PRODUCT_MATCHES_COLLECTION
         );
         let token = self
             .client
@@ -127,7 +250,7 @@ impl Store {
 
     /// Nulls out `product_id` on every provider product so linking can be
     /// recomputed from the stored comparison cache. Match rows are kept.
-    pub(crate) fn unlink_all(&self, provider_products: &[ProviderProductRow]) -> Result<()> {
+    fn unlink_all(&self, provider_products: &[ProviderProductRow]) -> Result<()> {
         for pp in provider_products {
             self.client
                 .records(PROVIDER_PRODUCTS_COLLECTION)
@@ -140,7 +263,7 @@ impl Store {
 
     /// Links a winning provider product to its canonical product and marks the
     /// match row as confirmed.
-    pub(crate) fn link_product(&self, winner: &crate::matching::MatchCandidate) -> Result<()> {
+    fn link_product(&self, winner: &MatchCandidate) -> Result<()> {
         self.client
             .records(PROVIDER_PRODUCTS_COLLECTION)
             .update(
@@ -155,38 +278,32 @@ impl Store {
         Ok(())
     }
 
-    /// Marks the match row for `(provider_product_id, product_id)` as
-    /// confirmed.
-    pub(crate) fn mark_confirmed(&self, winner: &crate::matching::MatchCandidate) -> Result<()> {
-        let filter = format!(
-            "provider_product_id='{}' && product_id='{}'",
-            escape_filter(&winner.provider_product_id),
-            escape_filter(&winner.product_id)
-        );
-        let existing = self
-            .client
-            .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
-            .list()
-            .filter(&filter)
-            .per_page(1)
-            .call::<ProviderMatchRow>()
-            .context("could not look up match")?;
-        if let Some(row) = existing.items.into_iter().next() {
-            self.client
-                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
-                .update(
-                    &row.id,
-                    ProviderMatchPayload {
-                        provider_product_id: winner.provider_product_id.clone(),
-                        product_id: winner.product_id.clone(),
-                        score: winner.score,
-                        status: "confirmed".to_string(),
-                    },
-                )
-                .call()
-                .map_err(|e| anyhow::anyhow!("could not confirm match: {e}"))?;
+    fn update_brand_link(&self, provider_product_id: &str, brand_id: Option<&str>) -> Result<()> {
+        self.client
+            .records(PROVIDER_PRODUCTS_COLLECTION)
+            .update(
+                provider_product_id,
+                BrandLinkPayload {
+                    brand_id: brand_id.map(str::to_owned),
+                },
+            )
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not update brand link: {e}"))
+            .map(|_| ())
+    }
+
+    fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>> {
+        let rows = self.list_all::<ProviderPriceRow>(
+            PROVIDER_PRODUCT_PRICES_COLLECTION,
+            None,
+            Some("-created"),
+            500,
+        )?;
+        let mut prices = HashMap::new();
+        for row in rows {
+            prices.entry(row.provider_product_id).or_insert(row.price);
         }
-        Ok(())
+        Ok(prices)
     }
 }
 

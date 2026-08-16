@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 
-use crate::store::types::{MatchInsert, ProductRow, ProviderProductRow};
-use crate::store::Store;
+use crate::domain::matching::{MIN_SCORE, MatchCandidate, assign_group, similarity};
+use crate::domain::model::{MatchInsert, ProductRow, ProviderProductRow};
+use crate::domain::ports::PriceStore;
 
 /// Runs the fuzzy matcher between provider products and canonical
 /// products. Every (provider product, canonical product) comparison is
@@ -13,7 +14,7 @@ use crate::store::Store;
 /// After the cache is up to date, the best match per provider product is
 /// linked (per-provider exclusivity) using the stored scores at or above
 /// `MIN_SCORE`. Returns how many provider products were matched.
-pub fn match_products(store: &Store) -> Result<usize> {
+pub fn match_products(store: &impl PriceStore) -> Result<usize> {
     let products = store.list_products()?;
     let provider_products = store.list_provider_products()?;
 
@@ -22,18 +23,27 @@ pub fn match_products(store: &Store) -> Result<usize> {
         .iter()
         .map(|r| (r.provider_product_id.clone(), r.product_id.clone()))
         .collect();
-    let mut candidates: Vec<crate::matching::MatchCandidate> = stored
+    let mut candidates: Vec<MatchCandidate> = stored
         .iter()
-        .filter(|r| r.score >= crate::matching::MIN_SCORE)
-        .map(|r| crate::matching::MatchCandidate {
+        .filter(|r| r.score >= MIN_SCORE)
+        .map(|r| MatchCandidate {
             provider_product_id: r.provider_product_id.clone(),
             product_id: r.product_id.clone(),
             score: r.score,
         })
         .collect();
 
-    let inserted = backfill_comparisons(store, &provider_products, &products, &mut stored_pairs, &mut candidates)?;
-    println!("Computed {inserted} new comparisons ({} already stored)", stored.len());
+    let inserted = backfill_comparisons(
+        store,
+        &provider_products,
+        &products,
+        &mut stored_pairs,
+        &mut candidates,
+    )?;
+    println!(
+        "Computed {inserted} new comparisons ({} already stored)",
+        stored.len()
+    );
 
     finish_linking(store, &provider_products, &candidates)
 }
@@ -43,7 +53,7 @@ pub fn match_products(store: &Store) -> Result<usize> {
 /// A quick way to refresh links after scraping new data without waiting
 /// for the full comparison pass — an interrupted `-match-products` can no
 /// longer leave the matrix stale.
-pub fn link_matches(store: &Store) -> Result<usize> {
+pub fn link_matches(store: &impl PriceStore) -> Result<usize> {
     let provider_products = store.list_provider_products()?;
     let candidates = store.list_above_threshold_candidates()?;
     finish_linking(store, &provider_products, &candidates)
@@ -52,9 +62,9 @@ pub fn link_matches(store: &Store) -> Result<usize> {
 /// Clears `product_id` on every provider product and re-assigns winners
 /// from `candidates`, printing how many provider products were matched.
 fn finish_linking(
-    store: &Store,
+    store: &impl PriceStore,
     provider_products: &[ProviderProductRow],
-    candidates: &[crate::matching::MatchCandidate],
+    candidates: &[MatchCandidate],
 ) -> Result<usize> {
     let provider_of: HashMap<&str, &str> = provider_products
         .iter()
@@ -74,11 +84,11 @@ fn finish_linking(
 /// pairs are appended to `candidates`. Returns how many comparisons were
 /// computed. A live progress percentage is redrawn on the same line.
 fn backfill_comparisons(
-    store: &Store,
+    store: &impl PriceStore,
     provider_products: &[ProviderProductRow],
     products: &[ProductRow],
     stored_pairs: &mut HashSet<(String, String)>,
-    candidates: &mut Vec<crate::matching::MatchCandidate>,
+    candidates: &mut Vec<MatchCandidate>,
 ) -> Result<usize> {
     let total = provider_products.len() * products.len();
     let mut inserted = 0;
@@ -101,24 +111,24 @@ fn backfill_comparisons(
 /// pair was already cached (including when another process just inserted
 /// it).
 fn backfill_pair(
-    store: &Store,
+    store: &impl PriceStore,
     pp: &ProviderProductRow,
     product: &ProductRow,
     stored_pairs: &mut HashSet<(String, String)>,
-    candidates: &mut Vec<crate::matching::MatchCandidate>,
+    candidates: &mut Vec<MatchCandidate>,
 ) -> Result<usize> {
     let pair = (pp.id.clone(), product.id.clone());
     if stored_pairs.contains(&pair) {
         return Ok(0);
     }
-    let score = crate::matching::similarity(&pp.name, &product.name);
+    let score = similarity(&pp.name, &product.name);
     let created = matches!(
         store.create_match(&pair.0, &pair.1, score)?,
         MatchInsert::Created
     );
     stored_pairs.insert(pair);
-    if score >= crate::matching::MIN_SCORE {
-        candidates.push(crate::matching::MatchCandidate {
+    if score >= MIN_SCORE {
+        candidates.push(MatchCandidate {
             provider_product_id: pp.id.clone(),
             product_id: product.id.clone(),
             score,
@@ -131,8 +141,8 @@ fn backfill_pair(
 /// `provider_products.product_id` and marks the winning match row
 /// confirmed. Returns the number of provider products linked.
 fn link_winners(
-    store: &Store,
-    candidates: &[crate::matching::MatchCandidate],
+    store: &impl PriceStore,
+    candidates: &[MatchCandidate],
     provider_of: &HashMap<&str, &str>,
 ) -> Result<usize> {
     let grouped = group_by_provider(candidates, provider_of);
@@ -146,10 +156,10 @@ fn link_winners(
 /// Groups candidates by their provider id (owned values avoid borrow
 /// lifetime juggling).
 fn group_by_provider(
-    candidates: &[crate::matching::MatchCandidate],
+    candidates: &[MatchCandidate],
     provider_of: &HashMap<&str, &str>,
-) -> HashMap<String, Vec<crate::matching::MatchCandidate>> {
-    let mut grouped: HashMap<String, Vec<crate::matching::MatchCandidate>> = HashMap::new();
+) -> HashMap<String, Vec<MatchCandidate>> {
+    let mut grouped: HashMap<String, Vec<MatchCandidate>> = HashMap::new();
     for c in candidates {
         if let Some(pid) = provider_of.get(c.provider_product_id.as_str()) {
             grouped
@@ -162,9 +172,9 @@ fn group_by_provider(
 }
 
 /// Assigns and links the winners of one provider group.
-fn apply_group(store: &Store, group: &[crate::matching::MatchCandidate]) -> Result<usize> {
+fn apply_group(store: &impl PriceStore, group: &[MatchCandidate]) -> Result<usize> {
     let mut matched = 0;
-    for winner in crate::matching::assign_group(group) {
+    for winner in assign_group(group) {
         store.link_product(&winner)?;
         matched += 1;
     }

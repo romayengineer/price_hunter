@@ -228,7 +228,10 @@ fn magento_ul_list_splits_cards_and_prefers_final_price() {
         </body></html>
         "#;
     let detection = detect_grid(html).expect("grid should be detected");
-    assert_eq!(detection.container.classes, vec!["mode-grid", "products", "products-grid", "wrapper"]);
+    assert_eq!(
+        detection.container.classes,
+        vec!["mode-grid", "products", "products-grid", "wrapper"]
+    );
     assert_eq!(detection.products.len(), 2);
     assert_eq!(detection.products[0].name, "FAME COUTURE EDP 80ML");
     assert_eq!(detection.products[0].price, 264000.0);
@@ -277,13 +280,22 @@ fn captures_product_url_images_and_currency() {
         "#;
     let detection = detect_grid(html).expect("grid should be detected");
     assert_eq!(detection.products.len(), 2);
-    assert_eq!(detection.products[0].url.as_deref(), Some("/perfumes/alpha"));
+    assert_eq!(
+        detection.products[0].url.as_deref(),
+        Some("/perfumes/alpha")
+    );
     assert_eq!(
         detection.products[0].images,
-        vec!["/img/alpha-1.jpg".to_string(), "/img/alpha-2.jpg".to_string()]
+        vec![
+            "/img/alpha-1.jpg".to_string(),
+            "/img/alpha-2.jpg".to_string()
+        ]
     );
     assert_eq!(detection.products[1].url.as_deref(), Some("/perfumes/beta"));
-    assert_eq!(detection.products[1].images, vec!["/img/beta.jpg".to_string()]);
+    assert_eq!(
+        detection.products[1].images,
+        vec!["/img/beta.jpg".to_string()]
+    );
     assert_eq!(detection.products[1].currency.as_deref(), Some("ARS"));
 }
 
@@ -343,13 +355,22 @@ fn product_link_skips_placeholder_anchors() {
 fn size_helpers_recognize_units() {
     assert_eq!(find_size_in_text("Gold Fresh Couture EDP"), None);
     assert_eq!(find_size_in_text("Crystal Emerald EDP"), None);
-    assert_eq!(find_size_in_text("Dylan Blush Pink EDP 100 ml"), Some("100 ml".into()));
+    assert_eq!(
+        find_size_in_text("Dylan Blush Pink EDP 100 ml"),
+        Some("100 ml".into())
+    );
     assert_eq!(find_size_in_text("light blue homme edp 50"), None);
-    assert_eq!(find_size_in_text("PAULVIC WOMAN X50ML"), Some("50ML".into()));
+    assert_eq!(
+        find_size_in_text("PAULVIC WOMAN X50ML"),
+        Some("50ML".into())
+    );
     assert_eq!(find_size_in_text("132 g"), Some("132 g".into()));
     assert_eq!(find_size_in_text("100 Ml"), Some("100 Ml".into()));
     assert_eq!(find_size_in_text("Promo 100ml"), Some("100ml".into()));
-    assert_eq!(find_size_in_text("fresh-gold-edp-precio-promocional-100ml/p"), Some("100ml".into()));
+    assert_eq!(
+        find_size_in_text("fresh-gold-edp-precio-promocional-100ml/p"),
+        Some("100ml".into())
+    );
     assert!(has_size("Blue Jeans EDT 75 ml"));
     assert!(!has_size("Funny EDT Ed. Limitada"));
     assert!(has_trailing_bare_number("light blue homme edp 50"));
@@ -440,7 +461,10 @@ fn existing_size_is_left_untouched() {
         </body></html>
         "#;
     let detection = detect_grid(html).expect("grid should be detected");
-    assert_eq!(detection.products[0].name, "Dylan Blush Pink EDP 100 ml + Neceser");
+    assert_eq!(
+        detection.products[0].name,
+        "Dylan Blush Pink EDP 100 ml + Neceser"
+    );
     assert_eq!(detection.products[1].name, "Desodorante Axe Gold 150 ml");
     assert_eq!(detection.products[2].name, "Rexona 132 g");
 }

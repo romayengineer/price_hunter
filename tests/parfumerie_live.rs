@@ -26,13 +26,10 @@ async fn run() -> WebDriverResult<()> {
 }
 
 async fn run_with(driver: &WebDriver) -> WebDriverResult<()> {
-    driver
-        .goto(PARFUMERIE_URL)
-        .await
-        .map_err(|e| {
-            eprintln!("failed to navigate to {PARFUMERIE_URL}: {e}");
-            e
-        })?;
+    driver.goto(PARFUMERIE_URL).await.map_err(|e| {
+        eprintln!("failed to navigate to {PARFUMERIE_URL}: {e}");
+        e
+    })?;
 
     let products = wait_for_products(driver, Duration::from_secs(60)).await?;
     dump_html_if_requested(driver).await?;
@@ -83,7 +80,10 @@ async fn wait_for_products(driver: &WebDriver, timeout: Duration) -> WebDriverRe
 
 async fn scroll_to_bottom(driver: &WebDriver) -> WebDriverResult<()> {
     let _ = driver
-        .execute("window.scrollTo(0, document.body.scrollHeight)", Vec::<serde_json::Value>::new())
+        .execute(
+            "window.scrollTo(0, document.body.scrollHeight)",
+            Vec::<serde_json::Value>::new(),
+        )
         .await;
     Ok(())
 }

@@ -1,4 +1,4 @@
-use price_hunter::detect::{detect_grid, Detection, Product};
+use price_hunter::detect::{Detection, Product, detect_grid};
 
 pub fn products_found(detection: &Detection, expected: &[Product]) {
     for product in expected {

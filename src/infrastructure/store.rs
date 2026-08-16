@@ -3,7 +3,7 @@ use pocketbase_sdk::client::{Auth, Client};
 mod error;
 pub(crate) mod http;
 mod import;
-mod matching;
+
 pub(crate) mod repo;
 mod scrape;
 pub(crate) mod types;
@@ -12,7 +12,6 @@ pub(crate) mod types;
 mod tests;
 
 pub use error::Error;
-pub use types::{Matrix, MatrixProvider, MatrixRow};
 
 /// Persists detections to a running PocketBase through its Record API using the
 /// normalized schema documented in DATABASE.md (providers, scrapes,
@@ -37,13 +36,14 @@ impl Store {
     /// and `POCKETBASE_SUPERUSER_PASSWORD` env vars overriding the file. The
     /// password is required (file or env).
     pub fn connect() -> Result<Self, Error> {
-        let config = crate::config::Config::load().map_err(|e| Error::Config(format!("{e:#}")))?;
+        let config = crate::infrastructure::config::Config::load()
+            .map_err(|e| Error::Config(format!("{e:#}")))?;
         let config = config.with_env();
         let password = config.password().map(str::to_owned).ok_or_else(|| {
             Error::Config(format!(
                 "no PocketBase password configured — set the password in {} or export \
                  POCKETBASE_SUPERUSER_PASSWORD",
-                crate::config::Config::path().display()
+                crate::infrastructure::config::Config::path().display()
             ))
         })?;
         let base_url = config.pocketbase.url;

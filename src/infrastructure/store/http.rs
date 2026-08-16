@@ -1,18 +1,3 @@
-/// Formats a unix-seconds timestamp as the ISO-8601 string PocketBase expects
-/// for `date` fields (`YYYY-MM-DD HH:MM:SS.mmmZ`, UTC). The store never sends
-/// raw epoch numbers — PocketBase treats them as blank.
-pub(crate) fn iso8601(secs: u64) -> String {
-    let dt = chrono::DateTime::from_timestamp(secs as i64, 0).unwrap_or_default();
-    dt.format("%Y-%m-%d %H:%M:%S%.3fZ").to_string()
-}
-
-pub(crate) fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 pub(super) fn host_of(url: &str) -> String {
     url::Url::parse(url)
         .ok()
@@ -48,12 +33,5 @@ mod tests {
         assert_eq!(escape_filter("A Drop d'Issey"), "A Drop d\\'Issey");
         assert_eq!(escape_filter(r"a\b"), r"a\\b");
         assert_eq!(escape_filter(r"back\'slash"), r"back\\\'slash");
-    }
-
-    #[test]
-    fn iso8601_formats_utc_datetime() {
-        assert_eq!(iso8601(0), "1970-01-01 00:00:00.000Z");
-        assert_eq!(iso8601(1_234_567_890), "2009-02-13 23:31:30.000Z");
-        assert_eq!(iso8601(123456), "1970-01-02 10:17:36.000Z");
     }
 }

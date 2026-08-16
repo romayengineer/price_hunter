@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use crate::detect::{Container, Detection, Product};
+use crate::domain::detect::{Container, Detection, Product};
 
 #[derive(Serialize)]
 struct Capture {
@@ -17,7 +17,11 @@ struct Capture {
 
 /// Renders a capture as pretty-printed JSON, without touching the filesystem.
 /// The disk write lives in [`write_capture`].
-pub fn render(url: &str, captured_at: u64, detection: &Detection) -> Result<String, serde_json::Error> {
+pub fn render(
+    url: &str,
+    captured_at: u64,
+    detection: &Detection,
+) -> Result<String, serde_json::Error> {
     let capture = Capture {
         url: url.to_string(),
         captured_at,
@@ -67,7 +71,10 @@ mod tests {
 
     #[test]
     fn falls_back_to_base_dir_without_valid_host() {
-        assert_eq!(capture_dir("captures", "not a url"), PathBuf::from("captures"));
+        assert_eq!(
+            capture_dir("captures", "not a url"),
+            PathBuf::from("captures")
+        );
         assert_eq!(capture_dir("captures", ""), PathBuf::from("captures"));
     }
 }

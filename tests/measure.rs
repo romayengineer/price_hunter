@@ -7,7 +7,11 @@ fn measure_containers() {
     for candidate in price_hunter::detect::diagnose_containers(&html) {
         println!(
             "{} p={} d={} density={:.4} classes={:?} id={:?}",
-            if candidate.selected { "SELECTED" } else { "        " },
+            if candidate.selected {
+                "SELECTED"
+            } else {
+                "        "
+            },
             candidate.price_count,
             candidate.div_count,
             candidate.density,

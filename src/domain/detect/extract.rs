@@ -6,8 +6,8 @@ use ego_tree::{NodeId, NodeRef};
 use scraper::Html;
 use scraper::node::Node;
 
-use super::{Price, Product};
 use super::prices::{classify_div, contains_confident_price};
+use super::{Price, Product};
 
 pub(super) fn extract_products(
     html: &Html,
@@ -32,13 +32,11 @@ pub(super) fn extract_products(
     }
     cards
         .into_iter()
-        .map(|(_, price_div_id, prices)| {
-            let price = current_price_of(html, price_div_id)
-                .or_else(|| prices.last().cloned())
-                .expect("price div has a price");
+        .filter_map(|(_, price_div_id, prices)| {
+            let price = current_price_of(html, price_div_id).or_else(|| prices.last().cloned())?;
             let card_id = card_of(html, price_div_id, container_id);
             let url = product_link(html, card_id);
-            Product {
+            Some(Product {
                 name: enrich_name_with_size(
                     html,
                     card_id,
@@ -50,7 +48,7 @@ pub(super) fn extract_products(
                 url,
                 images: card_images(html, card_id),
                 currency: detect_currency(html, card_id),
-            }
+            })
         })
         .collect()
 }
@@ -142,7 +140,10 @@ fn guess_name(html: &Html, id: NodeId, container_id: NodeId) -> String {
 
 /// Recognized product-size units, case-insensitive.
 fn is_size_unit(unit: &str) -> bool {
-    matches!(unit.to_ascii_lowercase().as_str(), "ml" | "g" | "gr" | "l" | "lt")
+    matches!(
+        unit.to_ascii_lowercase().as_str(),
+        "ml" | "g" | "gr" | "l" | "lt"
+    )
 }
 
 /// Returns the first `N unit` substring in `text` (e.g. `100 ml`, `100ml`,
@@ -233,7 +234,12 @@ pub(super) fn size_from_url(url: &str) -> Option<String> {
 /// include a size are returned unchanged. Otherwise the size is taken from the
 /// card's SKU selector (selected option first), then from the product URL, and
 /// finally by appending `ml` to a trailing bare number (e.g. `edp 50`).
-pub(super) fn enrich_name_with_size(html: &Html, card_id: NodeId, name: String, url: &str) -> String {
+pub(super) fn enrich_name_with_size(
+    html: &Html,
+    card_id: NodeId,
+    name: String,
+    url: &str,
+) -> String {
     if has_size(&name) {
         return name;
     }

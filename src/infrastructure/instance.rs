@@ -15,9 +15,7 @@ use anyhow::{Context, Result};
 
 /// Default base config dir (`~/.config`).
 fn default_config_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".config")
+    dirs::home_dir().unwrap_or_default().join(".config")
 }
 
 /// Location of the PID file. Honors `$XDG_CONFIG_HOME` when set, otherwise
@@ -179,7 +177,9 @@ mod tests {
         let home = dirs::home_dir().unwrap();
         assert_eq!(
             pid_path(),
-            home.join(".config").join("price_hunter").join("price_hunter.pid")
+            home.join(".config")
+                .join("price_hunter")
+                .join("price_hunter.pid")
         );
     }
 

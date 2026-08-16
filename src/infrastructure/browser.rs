@@ -12,6 +12,6 @@ pub async fn launch() -> WebDriverResult<WebDriver> {
 }
 
 pub fn profile_dir() -> PathBuf {
-    let cwd = std::env::current_dir().expect("could not determine working directory");
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     cwd.join("profiles").join("chrome")
 }

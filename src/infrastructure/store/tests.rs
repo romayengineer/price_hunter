@@ -1,4 +1,4 @@
-use crate::detect::{Container, Detection, Product};
+use crate::domain::detect::{Container, Detection, Product};
 
 #[test]
 fn sample_detection_builds_one_capture_and_two_products() {

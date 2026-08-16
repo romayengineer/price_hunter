@@ -1,11 +1,14 @@
 use anyhow::{Context, Result};
 
+use crate::domain::matching::full_name;
+use crate::domain::model::BrandRow;
+
 use super::Store;
 use super::error::Error;
 use super::http::escape_filter;
 use super::types::{
-    BRANDS_COLLECTION, PRODUCTS_COLLECTION, BrandPayload, BrandRow, ProductImportPayload,
-    ProductImportRow, RowOutcome,
+    BRANDS_COLLECTION, BrandPayload, PRODUCTS_COLLECTION, ProductImportPayload, ProductImportRow,
+    RowOutcome,
 };
 
 impl Store {
@@ -19,13 +22,13 @@ impl Store {
 
     /// The `anyhow`-typed body behind [`Store::import_products_csv`].
     fn import_products_csv_inner(&self, path: &std::path::Path) -> Result<usize> {
-        let mut reader = csv::Reader::from_path(path).with_context(|| {
-            format!("could not read CSV at {}", path.display())
-        })?;
+        let mut reader = csv::Reader::from_path(path)
+            .with_context(|| format!("could not read CSV at {}", path.display()))?;
         let mut created = 0usize;
         let mut skipped = 0usize;
         for result in reader.records() {
-            let record = result.with_context(|| format!("could not parse CSV at {}", path.display()))?;
+            let record =
+                result.with_context(|| format!("could not parse CSV at {}", path.display()))?;
             match self.import_csv_row(&record)? {
                 RowOutcome::Created => created += 1,
                 RowOutcome::Skipped => skipped += 1,
@@ -45,13 +48,10 @@ impl Store {
         if product_name.is_empty() {
             return Ok(RowOutcome::Skipped);
         }
-        if self
-            .find_product(&brand, &product_name, &size)?
-            .is_some()
-        {
+        if self.find_product(&brand, &product_name, &size)?.is_some() {
             return Ok(RowOutcome::Skipped);
         }
-        let full_name = crate::matching::full_name(&brand, &product_name, &size);
+        let full_name = full_name(&brand, &product_name, &size);
         self.client
             .records(PRODUCTS_COLLECTION)
             .create(ProductImportPayload {
@@ -100,13 +100,13 @@ impl Store {
 
     /// The `anyhow`-typed body behind [`Store::import_brands_csv`].
     fn import_brands_csv_inner(&self, path: &std::path::Path) -> Result<usize> {
-        let mut reader = csv::Reader::from_path(path).with_context(|| {
-            format!("could not read CSV at {}", path.display())
-        })?;
+        let mut reader = csv::Reader::from_path(path)
+            .with_context(|| format!("could not read CSV at {}", path.display()))?;
         let mut created = 0usize;
         let mut skipped = 0usize;
         for result in reader.records() {
-            let record = result.with_context(|| format!("could not parse CSV at {}", path.display()))?;
+            let record =
+                result.with_context(|| format!("could not parse CSV at {}", path.display()))?;
             match self.import_brand_row(&record)? {
                 RowOutcome::Created => created += 1,
                 RowOutcome::Skipped => skipped += 1,

@@ -10,7 +10,10 @@ use serde::Serialize;
 use super::Container;
 use super::prices::find_price_divs;
 
-pub(super) fn best_container(html: &Html, price_divs: &[(NodeId, Vec<super::Price>)]) -> Option<(NodeId, usize)> {
+pub(super) fn best_container(
+    html: &Html,
+    price_divs: &[(NodeId, Vec<super::Price>)],
+) -> Option<(NodeId, usize)> {
     ranked_containers(html, price_divs)
         .first()
         .map(|(id, p, _)| (*id, *p))

@@ -33,9 +33,8 @@ fn drop_ancestor_price_divs(
     price_divs
         .into_iter()
         .filter(|(id, _)| {
-            !ids.iter().any(|other| {
-                *other != *id && is_ancestor_of(html, *id, *other)
-            })
+            !ids.iter()
+                .any(|other| *other != *id && is_ancestor_of(html, *id, *other))
         })
         .collect()
 }
@@ -47,7 +46,10 @@ fn is_ancestor_of(html: &Html, ancestor: NodeId, descendant: NodeId) -> bool {
     node.ancestors().any(|a| a.id() == ancestor)
 }
 
-fn price_divs_from_own_text(html: &Html, own: &HashMap<NodeId, String>) -> Vec<(NodeId, Vec<Price>)> {
+fn price_divs_from_own_text(
+    html: &Html,
+    own: &HashMap<NodeId, String>,
+) -> Vec<(NodeId, Vec<Price>)> {
     let mut out = Vec::new();
     for node in html.tree.nodes() {
         let Node::Element(el) = node.value() else {
@@ -267,7 +269,10 @@ pub(super) fn number_tokens(text: &str) -> Vec<String> {
             let c = chars[j];
             if c.is_ascii_digit() {
                 j += 1;
-            } else if matches!(c, '.' | ',' | '\'') && j + 1 < chars.len() && chars[j + 1].is_ascii_digit() {
+            } else if matches!(c, '.' | ',' | '\'')
+                && j + 1 < chars.len()
+                && chars[j + 1].is_ascii_digit()
+            {
                 j += 2;
             } else if matches!(c, ' ' | '\u{a0}') && is_thousands_group(&chars, j) {
                 j += 1;
@@ -339,8 +344,5 @@ fn split_decimal(token: &str) -> (String, Option<String>) {
 }
 
 fn digits_after(s: &str, from: usize) -> usize {
-    s[from + 1..]
-        .chars()
-        .filter(|c| c.is_ascii_digit())
-        .count()
+    s[from + 1..].chars().filter(|c| c.is_ascii_digit()).count()
 }

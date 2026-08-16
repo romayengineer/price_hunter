@@ -2,15 +2,17 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
-use crate::store::http::{iso8601, now_secs};
-use crate::store::types::{ProductRow, ProviderProductRow, ProviderRow};
-use crate::store::{Matrix, MatrixProvider, MatrixRow, Store};
+use crate::domain::model::{
+    Matrix, MatrixProvider, MatrixRow, ProductRow, ProviderProductRow, ProviderRow,
+};
+use crate::domain::ports::PriceStore;
+use crate::domain::time::{iso8601, now_secs};
 
 /// Builds the product × provider price matrix: one row per product with a
 /// price at two or more distinct providers, one column per provider, and
 /// the latest scraped price in each cell. When a product maps to several
 /// listings on the same provider the lowest price wins.
-pub fn matrix(store: &Store) -> Result<Matrix> {
+pub fn matrix(store: &impl PriceStore) -> Result<Matrix> {
     let products = store.list_all_products()?;
     let provider_products = store.list_provider_products()?;
     let latest_prices = store.latest_price_per_provider_product()?;

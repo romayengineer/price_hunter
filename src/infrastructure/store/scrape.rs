@@ -1,16 +1,17 @@
 use anyhow::{Context, Result};
 
-use crate::detect::{Detection, Product};
+use crate::domain::detect::{Detection, Product};
+use crate::domain::model::{ProviderProductRow, ProviderRow};
+use crate::domain::time::{iso8601, now_secs};
 
 use super::Store;
 use super::error::Error;
-use super::http::{escape_filter, host_of, iso8601, now_secs};
+use super::http::{escape_filter, host_of};
 use super::types::{
-    PROVIDER_PRODUCTS_COLLECTION, PROVIDER_PRODUCT_IMAGES_COLLECTION,
-    PROVIDER_PRODUCT_PRICES_COLLECTION, PROVIDERS_COLLECTION, SCRAPES_COLLECTION,
-    PriceRow, ProductImagePayload, ProductImageRow, ProviderProductPayload,
-    ProviderProductRow, ProviderPricePayload, ProviderPayload, ProviderRow, ScrapePayload,
-    ScrapeRow,
+    PROVIDER_PRODUCT_IMAGES_COLLECTION, PROVIDER_PRODUCT_PRICES_COLLECTION,
+    PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION, PriceRow, ProductImagePayload,
+    ProductImageRow, ProviderPayload, ProviderPricePayload, ProviderProductPayload,
+    SCRAPES_COLLECTION, ScrapePayload, ScrapeRow,
 };
 
 impl Store {
@@ -117,7 +118,12 @@ impl Store {
         provider_id: &str,
         detection: &Detection,
     ) -> Result<ScrapeRow> {
-        let container_class = detection.container.classes.first().cloned().unwrap_or_default();
+        let container_class = detection
+            .container
+            .classes
+            .first()
+            .cloned()
+            .unwrap_or_default();
         self.client
             .records(SCRAPES_COLLECTION)
             .create(ScrapePayload {
@@ -149,11 +155,9 @@ impl Store {
         if let Some(row) = self.find_provider_product(&provider.id, "name", name)? {
             return Ok(row);
         }
-        if let Some(row) = self.find_provider_product(
-            &provider.id,
-            "provider_product_url",
-            provider_product_url,
-        )? {
+        if let Some(row) =
+            self.find_provider_product(&provider.id, "provider_product_url", provider_product_url)?
+        {
             return Ok(row);
         }
         let created = self

@@ -10,7 +10,7 @@ mod prices;
 #[cfg(test)]
 mod tests;
 
-pub use container::{diagnose_containers, ContainerCandidate};
+pub use container::{ContainerCandidate, diagnose_containers};
 use container::{best_container, build_container};
 use extract::extract_products;
 use prices::find_price_divs;

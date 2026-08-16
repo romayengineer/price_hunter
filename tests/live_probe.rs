@@ -32,7 +32,10 @@ async fn run_with(driver: &WebDriver, url: &str) -> WebDriverResult<()> {
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         let _ = driver
-            .execute("window.scrollTo(0, document.body.scrollHeight)", Vec::<serde_json::Value>::new())
+            .execute(
+                "window.scrollTo(0, document.body.scrollHeight)",
+                Vec::<serde_json::Value>::new(),
+            )
             .await;
         tokio::time::sleep(Duration::from_millis(500)).await;
     }

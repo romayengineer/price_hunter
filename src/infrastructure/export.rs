@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::store::Matrix;
+use crate::domain::model::Matrix;
 
 /// Serializes the matrix as CSV with the same table structure as
 /// `GET /matrix`: one column per provider (header = domain), one row per
@@ -38,7 +38,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use crate::store::{MatrixProvider, MatrixRow};
+    use crate::domain::model::{MatrixProvider, MatrixRow};
 
     #[test]
     fn to_csv_writes_table_matching_matrix_structure() {

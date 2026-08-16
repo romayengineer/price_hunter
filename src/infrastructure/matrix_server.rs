@@ -5,8 +5,9 @@ use axum::routing::get;
 use axum::{Json, Router};
 use std::sync::Arc;
 
-use crate::services;
-use crate::store::{Matrix, Store};
+use crate::application::matrix as matrix_service;
+use crate::domain::model::Matrix;
+use crate::infrastructure::store::Store;
 
 /// Serves the product × provider price matrix over HTTP for local UIs.
 ///
@@ -38,11 +39,9 @@ async fn health() -> &'static str {
     "ok"
 }
 
-async fn matrix(
-    State(store): State<Arc<Store>>,
-) -> Result<Json<Matrix>, (StatusCode, String)> {
+async fn matrix(State(store): State<Arc<Store>>) -> Result<Json<Matrix>, (StatusCode, String)> {
     let store = store.clone();
-    let matrix = tokio::task::spawn_blocking(move || services::matrix::matrix(&store))
+    let matrix = tokio::task::spawn_blocking(move || matrix_service::matrix(&*store))
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;

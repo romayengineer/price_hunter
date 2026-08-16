@@ -6,6 +6,7 @@ mod http;
 mod import;
 mod matching;
 mod matrix;
+mod repo;
 mod scrape;
 mod types;
 

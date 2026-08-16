@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use super::Store;
 use super::http::{iso8601, now_secs};
@@ -35,73 +35,26 @@ impl Store {
     /// Lists every canonical product (no `active` filter — the matrix includes
     /// retired products that still have listings).
     fn list_all_products(&self) -> Result<Vec<ProductRow>> {
-        let mut items = Vec::new();
-        let mut page = 1;
-        loop {
-            let result = self
-                .client
-                .records(PRODUCTS_COLLECTION)
-                .list()
-                .page(page)
-                .per_page(100)
-                .call::<ProductRow>()
-                .context("could not list products")?;
-            let count = result.items.len();
-            items.extend(result.items);
-            if count < 100 {
-                break;
-            }
-            page += 1;
-        }
-        Ok(items)
+        self.list_all(PRODUCTS_COLLECTION, None, None, 100)
     }
 
     /// Lists every provider.
     fn list_providers(&self) -> Result<Vec<ProviderRow>> {
-        let mut items = Vec::new();
-        let mut page = 1;
-        loop {
-            let result = self
-                .client
-                .records(PROVIDERS_COLLECTION)
-                .list()
-                .page(page)
-                .per_page(100)
-                .call::<ProviderRow>()
-                .context("could not list providers")?;
-            let count = result.items.len();
-            items.extend(result.items);
-            if count < 100 {
-                break;
-            }
-            page += 1;
-        }
-        Ok(items)
+        self.list_all(PROVIDERS_COLLECTION, None, None, 100)
     }
 
     /// Resolves the latest price per provider product by listing prices sorted
     /// newest-first and keeping the first row seen for each provider product.
     fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>> {
+        let rows = self.list_all::<ProviderPriceRow>(
+            PROVIDER_PRODUCT_PRICES_COLLECTION,
+            None,
+            Some("-created"),
+            500,
+        )?;
         let mut prices = HashMap::new();
-        let mut page = 1;
-        loop {
-            let result = self
-                .client
-                .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
-                .list()
-                .sort("-created")
-                .page(page)
-                .per_page(500)
-                .call::<ProviderPriceRow>()
-                .context("could not list prices")?;
-            let count = result.items.len();
-            for row in result.items {
-                prices.entry(row.provider_product_id).or_insert(row.price);
-            }
-            if count < 500 {
-                break;
-            }
-            page += 1;
+        for row in rows {
+            prices.entry(row.provider_product_id).or_insert(row.price);
         }
         Ok(prices)
     }

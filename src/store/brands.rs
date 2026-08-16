@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use super::Store;
 use super::types::{
@@ -72,25 +72,7 @@ impl Store {
 
     /// Lists every brand (id + name).
     fn list_brands(&self) -> Result<Vec<BrandRow>> {
-        let mut items = Vec::new();
-        let mut page = 1;
-        loop {
-            let result = self
-                .client
-                .records(BRANDS_COLLECTION)
-                .list()
-                .page(page)
-                .per_page(500)
-                .call::<BrandRow>()
-                .context("could not list brands")?;
-            let count = result.items.len();
-            items.extend(result.items);
-            if count < 500 {
-                break;
-            }
-            page += 1;
-        }
-        Ok(items)
+        self.list_all(BRANDS_COLLECTION, None, None, 500)
     }
 
     /// Resolves and writes the brand for one provider product, reporting the

@@ -80,78 +80,31 @@ impl Store {
     /// comparison cache grows to millions of rows).
     fn list_above_threshold_candidates(&self) -> Result<Vec<crate::matching::MatchCandidate>> {
         let filter = format!("score>={}", crate::matching::MIN_SCORE);
-        let mut candidates = Vec::new();
-        let mut page = 1;
-        loop {
-            let result = self
-                .client
-                .records(PROVIDER_PRODUCT_MATCHES_COLLECTION)
-                .list()
-                .filter(&filter)
-                .page(page)
-                .per_page(500)
-                .call::<ProviderMatchRow>()
-                .context("could not list candidates")?;
-            let count = result.items.len();
-            candidates.extend(result.items.into_iter().map(|r| crate::matching::MatchCandidate {
+        let rows = self.list_all::<ProviderMatchRow>(
+            PROVIDER_PRODUCT_MATCHES_COLLECTION,
+            Some(&filter),
+            None,
+            500,
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|r| crate::matching::MatchCandidate {
                 provider_product_id: r.provider_product_id,
                 product_id: r.product_id,
                 score: r.score,
-            }));
-            if count < 500 {
-                break;
-            }
-            page += 1;
-        }
-        Ok(candidates)
+            })
+            .collect())
     }
 
     /// Lists every canonical product with `active = true`. Shared with the
     /// brand matcher (which reads each product's `brand`).
     pub(super) fn list_products(&self) -> Result<Vec<ProductRow>> {
-        let mut items = Vec::new();
-        let mut page = 1;
-        loop {
-            let result = self
-                .client
-                .records(PRODUCTS_COLLECTION)
-                .list()
-                .filter("active=true")
-                .page(page)
-                .per_page(100)
-                .call::<ProductRow>()
-                .context("could not list products")?;
-            let count = result.items.len();
-            items.extend(result.items);
-            if count < 100 {
-                break;
-            }
-            page += 1;
-        }
-        Ok(items)
+        self.list_all(PRODUCTS_COLLECTION, Some("active=true"), None, 100)
     }
 
     /// Lists every provider product. Shared with the matrix builder.
     pub(super) fn list_provider_products(&self) -> Result<Vec<ProviderProductRow>> {
-        let mut items = Vec::new();
-        let mut page = 1;
-        loop {
-            let result = self
-                .client
-                .records(PROVIDER_PRODUCTS_COLLECTION)
-                .list()
-                .page(page)
-                .per_page(100)
-                .call::<ProviderProductRow>()
-                .context("could not list provider products")?;
-            let count = result.items.len();
-            items.extend(result.items);
-            if count < 100 {
-                break;
-            }
-            page += 1;
-        }
-        Ok(items)
+        self.list_all(PROVIDER_PRODUCTS_COLLECTION, None, None, 100)
     }
 
     /// Lists every stored match. Loads each provider product's pairs with an

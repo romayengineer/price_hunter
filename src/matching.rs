@@ -77,23 +77,17 @@ pub fn best_match<'a>(
     score: impl Fn(&str, &str) -> f64,
     threshold: f64,
 ) -> Option<(&'a str, &'a str, f64)> {
-    let mut best: Option<(&str, &str, f64)> = None;
-    for (id, text) in candidates {
-        let s = score(query, text);
-        if s < threshold {
-            continue;
-        }
-        let take = match best {
-            None => true,
-            Some((_, best_text, best_score)) => {
-                s > best_score || (s == best_score && text.len() > best_text.len())
-            }
-        };
-        if take {
-            best = Some((id, text, s));
-        }
-    }
-    best
+    candidates
+        .iter()
+        .filter_map(|(id, text)| {
+            let s = score(query, text);
+            (s >= threshold).then_some((id.as_str(), text.as_str(), s))
+        })
+        .max_by(|a, b| {
+            a.2.partial_cmp(&b.2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.1.len().cmp(&b.1.len()))
+        })
 }
 
 /// Greedily assigns canonical products to provider products within one
@@ -124,6 +118,7 @@ pub fn assign_group(candidates: &[MatchCandidate]) -> Vec<MatchCandidate> {
 }
 
 #[cfg(test)]
+#[allow(clippy::cognitive_complexity)]
 mod tests {
     use super::*;
 
@@ -200,6 +195,44 @@ mod tests {
                 MatchCandidate { provider_product_id: "pp2".into(), product_id: "p1".into(), score: 0.95 },
                 MatchCandidate { provider_product_id: "pp1".into(), product_id: "p2".into(), score: 0.9 },
             ]
+        );
+    }
+
+    #[test]
+    fn brand_coverage_matches_embedded_brand() {
+        assert_eq!(brand_coverage("Kevin Black EDT 100 Ml", "kevin"), 1.0);
+        assert_eq!(brand_coverage("Puro Giesso Mujer EDT 100 Ml", "giesso"), 1.0);
+        assert_eq!(
+            brand_coverage("adolfo dominguez adn neroli ecstasy 100 ml", "adolfo dominguez"),
+            1.0
+        );
+        assert_eq!(brand_coverage("some unrelated name", "diesel"), 0.0);
+        // one of two brand tokens present
+        assert_eq!(brand_coverage("adolfo neroli", "adolfo dominguez"), 0.5);
+        // name carries no brand token
+        assert_eq!(brand_coverage("diesel", "adolfo dominguez"), 0.0);
+    }
+
+    #[test]
+    fn best_match_picks_highest_score_and_longest_tie_break() {
+        let candidates = vec![
+            ("b1".to_string(), "adolfo".to_string()),
+            ("b2".to_string(), "adolfo dominguez".to_string()),
+            ("b3".to_string(), "diesel".to_string()),
+        ];
+        let (id, text, score) = best_match(
+            "adolfo dominguez adn neroli ecstasy 100 ml",
+            &candidates,
+            brand_coverage,
+            BRAND_MIN_SCORE,
+        )
+        .expect("brand should match");
+        assert_eq!(id, "b2");
+        assert_eq!(text, "adolfo dominguez");
+        assert_eq!(score, 1.0);
+
+        assert!(
+            best_match("completely unrelated", &candidates, brand_coverage, BRAND_MIN_SCORE).is_none()
         );
     }
 }

@@ -164,6 +164,16 @@ password = "change-me"          # required; first run writes a commented templat
   `-match-products` pass. This is what keeps the matrix/CSV populated; a full
   run interrupted during the long backfill leaves the old links stale and the
   matrix empty.
+- `cargo run -- -match-brands` assigns a brand to every provider product and
+  writes it to `provider_products.brand_id` (only when it changes). A provider
+  product linked to a canonical product takes that product's `brand`; the rest
+  are fuzzy-matched against the `brand` table by token coverage
+  (`matching::brand_coverage`, all brand tokens must appear — Sørensen-Dice
+  scores too low when a brand is a small slice of a long name). Unresolved
+  products keep `brand_id` empty so `brand_id=null` finds them. Note:
+  PocketBase serializes unset relations as `""`, not `null`, so `Some("")` is
+  treated as "unset" throughout. The `brand_id` field is added by migration
+  `1787000003_provider_product_brand.js`.
 - `cargo run -- -matrix-server` serves the product × provider price matrix for
   the local Flutter UI. Binds to `127.0.0.1:8091` (override
   `PRICE_HUNTER_MATRIX_PORT`) and rebuilds the matrix from PocketBase on every

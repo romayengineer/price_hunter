@@ -16,6 +16,7 @@ use price_hunter::store::Store;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init().ok();
     let args: Vec<String> = env::args().collect();
     if let Some(path) = import_products_arg(&args) {
         return import_products(&path);
@@ -246,6 +247,6 @@ fn persist_to_store(store: &Store, url: &str, capture_path: &str, detection: &De
         .as_secs();
     match store.save(url, now, capture_path, detection) {
         Ok(()) => println!("Persisted capture to the store"),
-        Err(e) => eprintln!("Could not persist capture to the store: {e}"),
+        Err(e) => log::error!("Could not persist capture to the store: {e}"),
     }
 }

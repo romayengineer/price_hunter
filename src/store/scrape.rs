@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use crate::detect::{Detection, Product};
 
 use super::Store;
+use super::error::Error;
 use super::http::{escape_filter, host_of, iso8601, now_secs};
 use super::types::{
     PROVIDER_PRODUCTS_COLLECTION, PROVIDER_PRODUCT_IMAGES_COLLECTION,
@@ -24,6 +25,19 @@ impl Store {
         captured_at: u64,
         capture_path: &str,
         detection: &Detection,
+    ) -> Result<(), Error> {
+        self.save_inner(url, captured_at, capture_path, detection)?;
+        Ok(())
+    }
+
+    /// The `anyhow`-typed body behind [`Store::save`], kept separate so the
+    /// public entry point can surface a typed [`Error`].
+    fn save_inner(
+        &self,
+        url: &str,
+        captured_at: u64,
+        capture_path: &str,
+        detection: &Detection,
     ) -> Result<()> {
         let host = host_of(url);
         let provider = self.ensure_provider(&host)?;
@@ -33,7 +47,7 @@ impl Store {
             // and move on so the other products still land (the scrape row is
             // already written).
             if let Err(e) = self.save_product(&provider, &scrape.id, product) {
-                eprintln!("could not persist product {:?}: {e:#}", product.name);
+                log::error!("could not persist product {:?}: {e:#}", product.name);
             }
         }
         Ok(())

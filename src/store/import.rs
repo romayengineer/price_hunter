@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 
 use super::Store;
+use super::error::Error;
 use super::http::escape_filter;
 use super::types::{
     BRANDS_COLLECTION, PRODUCTS_COLLECTION, BrandPayload, BrandRow, ProductImportPayload,
@@ -12,7 +13,12 @@ impl Store {
     /// `products` collection. Rows already present (unique on
     /// `(brand, name, size)`) are skipped; the rest are created with
     /// `active = true`. Returns the number of rows created.
-    pub fn import_products_csv(&self, path: &std::path::Path) -> Result<usize> {
+    pub fn import_products_csv(&self, path: &std::path::Path) -> Result<usize, Error> {
+        self.import_products_csv_inner(path).map_err(Error::from)
+    }
+
+    /// The `anyhow`-typed body behind [`Store::import_products_csv`].
+    fn import_products_csv_inner(&self, path: &std::path::Path) -> Result<usize> {
         let mut reader = csv::Reader::from_path(path).with_context(|| {
             format!("could not read CSV at {}", path.display())
         })?;
@@ -88,7 +94,12 @@ impl Store {
     /// Imports the canonical brand list from a CSV with a single column
     /// (brand name). A leading `brand` header row, empty rows and duplicates
     /// are skipped. Returns the number of brands created.
-    pub fn import_brands_csv(&self, path: &std::path::Path) -> Result<usize> {
+    pub fn import_brands_csv(&self, path: &std::path::Path) -> Result<usize, Error> {
+        self.import_brands_csv_inner(path).map_err(Error::from)
+    }
+
+    /// The `anyhow`-typed body behind [`Store::import_brands_csv`].
+    fn import_brands_csv_inner(&self, path: &std::path::Path) -> Result<usize> {
         let mut reader = csv::Reader::from_path(path).with_context(|| {
             format!("could not read CSV at {}", path.display())
         })?;

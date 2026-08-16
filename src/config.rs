@@ -104,7 +104,7 @@ impl Config {
         if let Err(e) = std::fs::create_dir_all(path.parent().expect("config path has a parent"))
             .and_then(|_| std::fs::write(&path, TEMPLATE))
         {
-            eprintln!("could not write config template to {}: {e}", path.display());
+            log::warn!("could not write config template to {}: {e}", path.display());
         }
         #[cfg(unix)]
         {

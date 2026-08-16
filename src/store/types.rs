@@ -44,6 +44,7 @@ pub(super) struct BrandPayload {
 #[allow(dead_code)]
 pub(super) struct BrandRow {
     pub(super) id: String,
+    pub(super) name: String,
 }
 
 /// Payload for the `providers` collection.
@@ -98,15 +99,18 @@ pub(super) struct ProviderProductRow {
     pub(super) provider_id: String,
     pub(super) name: String,
     pub(super) product_id: Option<String>,
+    pub(super) brand_id: Option<String>,
 }
 
 /// A canonical product used by the fuzzy matcher. `name` already holds the
-/// full display name (brand + product_name + size).
+/// full display name (brand + product_name + size); `brand` is the canonical
+/// brand (also used to assign a brand to linked provider products).
 #[derive(Default, Deserialize, Debug)]
 #[allow(dead_code)]
 pub(super) struct ProductRow {
     pub(super) id: String,
     pub(super) name: String,
+    pub(super) brand: String,
 }
 
 /// Payload for updating `provider_products.product_id`. A `None` value
@@ -114,6 +118,13 @@ pub(super) struct ProductRow {
 #[derive(Serialize, Clone)]
 pub(super) struct ProductLinkPayload {
     pub(super) product_id: Option<String>,
+}
+
+/// Payload for updating `provider_products.brand_id`. A `None` value
+/// serializes as `null`, clearing the brand assignment.
+#[derive(Serialize, Clone)]
+pub(super) struct BrandLinkPayload {
+    pub(super) brand_id: Option<String>,
 }
 
 /// A `provider_product_prices` row used to resolve the latest price per

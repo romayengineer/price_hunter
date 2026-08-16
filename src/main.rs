@@ -30,6 +30,9 @@ async fn main() -> anyhow::Result<()> {
     if args.iter().skip(1).any(|a| a == "-link-matches") {
         return link_matches();
     }
+    if args.iter().skip(1).any(|a| a == "-match-brands") {
+        return match_brands();
+    }
     if args.iter().skip(1).any(|a| a == "-matrix-server") {
         return matrix_server().await;
     }
@@ -138,6 +141,17 @@ fn link_matches() -> anyhow::Result<()> {
     let store = Store::connect().context("cannot connect to PocketBase")?;
     let matched = store.link_matches()?;
     println!("Done: {matched} provider products matched");
+    Ok(())
+}
+
+/// Assigns a brand to every provider product (`provider_products.brand_id`,
+/// from the linked product's brand or a fuzzy brand match) and exits without
+/// opening a browser.
+fn match_brands() -> anyhow::Result<()> {
+    config::Config::ensure_template();
+    let store = Store::connect().context("cannot connect to PocketBase")?;
+    store.match_brands()?;
+    println!("Done: brand matching complete");
     Ok(())
 }
 

@@ -106,8 +106,9 @@ impl Store {
         Ok(candidates)
     }
 
-    /// Lists every canonical product with `active = true`.
-    fn list_products(&self) -> Result<Vec<ProductRow>> {
+    /// Lists every canonical product with `active = true`. Shared with the
+    /// brand matcher (which reads each product's `brand`).
+    pub(super) fn list_products(&self) -> Result<Vec<ProductRow>> {
         let mut items = Vec::new();
         let mut page = 1;
         loop {

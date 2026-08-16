@@ -1,9 +1,14 @@
-//! Pure fuzzy-matching between provider products and canonical products.
-//! No PocketBase types here — the store feeds in plain rows and persists the
-//! results.
+//! Pure fuzzy-matching between provider products and canonical products
+//! (and, for brand assignment, between provider product names and the brand
+//! table). No PocketBase types here — the store feeds in plain rows and
+//! persists the results.
 
 /// Minimum score for a provider product to be linked to a canonical product.
 pub const MIN_SCORE: f64 = 0.6;
+
+/// Minimum `brand_coverage` for a provider product name to be assigned a
+/// brand: every token of the brand must appear in the name.
+pub const BRAND_MIN_SCORE: f64 = 1.0;
 
 /// Joins brand, name and size into one comparison string, skipping empties.
 /// The parts are space-separated so the token-based normalization in
@@ -29,7 +34,7 @@ pub struct MatchCandidate {
 /// returns the sorted tokens joined by spaces. Sorting makes the comparison
 /// order-insensitive, so "Light Blue Homme EDP 50" and "EDP 50 Light Blue
 /// Homme" normalize to the same string.
-fn normalize(name: &str) -> String {
+pub(crate) fn normalize(name: &str) -> String {
     let mut tokens: Vec<String> = name
         .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
@@ -43,6 +48,52 @@ fn normalize(name: &str) -> String {
 /// Sørensen-Dice similarity between two product names (0.0–1.0).
 pub fn similarity(a: &str, b: &str) -> f64 {
     strsim::sorensen_dice(&normalize(a), &normalize(b))
+}
+
+/// Fraction of the brand's normalized tokens that appear in `name`
+/// (0.0–1.0). Used to detect a brand embedded in a long product name, where
+/// Sørensen-Dice scores too low (the brand is a small slice of the whole).
+/// Example: `brand_coverage("kevin black edt 100 ml", "kevin") == 1.0`.
+pub fn brand_coverage(name: &str, brand: &str) -> f64 {
+    let name_tokens: Vec<String> = normalize(name).split(' ').map(str::to_owned).collect();
+    let brand_tokens: Vec<String> = normalize(brand).split(' ').map(str::to_owned).collect();
+    if brand_tokens.is_empty() {
+        return 0.0;
+    }
+    let present = brand_tokens
+        .iter()
+        .filter(|t| name_tokens.contains(t))
+        .count();
+    present as f64 / brand_tokens.len() as f64
+}
+
+/// Returns the best-scoring `(candidate_id, candidate_text, score)` for
+/// `query` using `score`, above `threshold`. Ties go to the longer candidate
+/// (more specific). Used for brand assignment; the product matcher shares the
+/// same `normalize`/`similarity` core.
+pub fn best_match<'a>(
+    query: &str,
+    candidates: &'a [(String, String)],
+    score: impl Fn(&str, &str) -> f64,
+    threshold: f64,
+) -> Option<(&'a str, &'a str, f64)> {
+    let mut best: Option<(&str, &str, f64)> = None;
+    for (id, text) in candidates {
+        let s = score(query, text);
+        if s < threshold {
+            continue;
+        }
+        let take = match best {
+            None => true,
+            Some((_, best_text, best_score)) => {
+                s > best_score || (s == best_score && text.len() > best_text.len())
+            }
+        };
+        if take {
+            best = Some((id, text, s));
+        }
+    }
+    best
 }
 
 /// Greedily assigns canonical products to provider products within one

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use pocketbase_sdk::client::{Auth, Client};
 
+mod brands;
 mod http;
 mod import;
 mod matching;

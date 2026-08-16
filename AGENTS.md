@@ -162,6 +162,11 @@ password = "change-me"          # required; first run writes a commented templat
   blocking PocketBase queries run via `spawn_blocking` (the SDK is ureq-based,
   not async). Requires PocketBase to be up; it uses the same config as
   `cargo run`.
+- `cargo run -- -export-matrix <file.csv>` writes the same matrix to a CSV
+  file (one column per provider — header = domain — one row per product, raw
+  numeric prices, blank cell when a provider doesn't carry the product,
+  UTF-8 BOM so Excel detects the encoding). Built from `Store::matrix()`, so
+  rows are the same as `GET /matrix` (products priced at ≥2 providers).
 
 ## UI
 - A Flutter (macOS) app lives in the sibling repo

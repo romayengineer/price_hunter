@@ -33,6 +33,8 @@ pub enum Command {
     LinkMatches,
     /// `-match-brands`
     MatchBrands,
+    /// `-report-missing-brands`
+    ReportMissingBrands,
     /// `-matrix-server`
     MatrixServer,
     /// Default: open a browser, optionally at a URL, and poll for captures.
@@ -61,6 +63,9 @@ pub fn parse(args: &[String]) -> Command {
     if rest.iter().any(|a| a == "-match-brands") {
         return Command::MatchBrands;
     }
+    if rest.iter().any(|a| a == "-report-missing-brands") {
+        return Command::ReportMissingBrands;
+    }
     if rest.iter().any(|a| a == "-matrix-server") {
         return Command::MatrixServer;
     }
@@ -82,6 +87,7 @@ pub async fn run(command: Command) -> anyhow::Result<()> {
         Command::MatchProducts => match_products(),
         Command::LinkMatches => link_matches(),
         Command::MatchBrands => match_brands(),
+        Command::ReportMissingBrands => report_missing_brands(),
         Command::MatrixServer => matrix_server().await,
         Command::Browse(url) => browse(url).await,
     }
@@ -173,6 +179,26 @@ fn match_brands() -> anyhow::Result<()> {
     );
     println!("Unmatched (brand_id null): {}", summary.unmatched);
     println!("Done: brand matching complete");
+    Ok(())
+}
+
+/// Lists provider products linked to a canonical product whose stored name is
+/// missing that product's brand (a likely extractor bug) and exits.
+fn report_missing_brands() -> anyhow::Result<()> {
+    let store = connect()?;
+    let report = brands::missing_brands(&store)?;
+    println!(
+        "{} of {} matched provider products are missing the linked brand in their name",
+        report.affected.len(),
+        report.matched
+    );
+    for row in &report.affected {
+        println!(
+            "{}\t{}\t{}\t{}\t{}",
+            row.provider_domain, row.name, row.brand, row.product_id, row.provider_product_id
+        );
+    }
+    println!("Done: {} rows affected", report.affected.len());
     Ok(())
 }
 
@@ -371,10 +397,15 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn bare_flags_dispatch_to_their_command() {
         assert_eq!(parse(&args(&["-match-products"])), Command::MatchProducts);
         assert_eq!(parse(&args(&["-link-matches"])), Command::LinkMatches);
         assert_eq!(parse(&args(&["-match-brands"])), Command::MatchBrands);
+        assert_eq!(
+            parse(&args(&["-report-missing-brands"])),
+            Command::ReportMissingBrands
+        );
         assert_eq!(parse(&args(&["-matrix-server"])), Command::MatrixServer);
     }
 

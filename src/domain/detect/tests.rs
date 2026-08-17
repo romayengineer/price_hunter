@@ -233,12 +233,86 @@ fn magento_ul_list_splits_cards_and_prefers_final_price() {
         vec!["mode-grid", "products", "products-grid", "wrapper"]
     );
     assert_eq!(detection.products.len(), 2);
-    assert_eq!(detection.products[0].name, "FAME COUTURE EDP 80ML");
+    assert_eq!(detection.products[0].name, "RABANNE FAME COUTURE EDP 80ML");
     assert_eq!(detection.products[0].price, 264000.0);
     assert_eq!(detection.products[0].price_text, "264.000");
-    assert_eq!(detection.products[1].name, "212 SEXY MEN EDT 100ML");
+    assert_eq!(
+        detection.products[1].name,
+        "CAROLINA HERRERA 212 SEXY MEN EDT 100ML"
+    );
     assert_eq!(detection.products[1].price, 165000.0);
     assert_eq!(detection.products[1].price_text, "165.000");
+}
+
+#[test]
+fn vtex_brand_container_is_prepended_when_missing_from_name() {
+    let html = r##"
+        <html><body>
+          <div class="vtex-search-result-3-x-gallery">
+            <div class="vtex-product-summary-2-x-containerNormal">
+              <a class="vtex-product-summary-2-x-clearLink" aria-label="Gold Fresh Couture EDP">
+                <div class="vtex-product-summary-2-x-productBrandContainer"><span class="vtex-product-summary-2-x-productBrandName">Moschino</span></div>
+                <h3 class="vtex-product-summary-2-x-nameContainer">
+                  <span class="vtex-product-summary-2-x-productBrand vtex-product-summary-2-x-brandName t-body">Gold Fresh Couture EDP</span>
+                </h3>
+                <span class="price">$ 95.400</span>
+              </a>
+            </div>
+            <div class="vtex-product-summary-2-x-containerNormal">
+              <a class="vtex-product-summary-2-x-clearLink" aria-label="Adidas Vibes Smooth Pace EDP">
+                <div class="vtex-product-summary-2-x-productBrandContainer"><span class="vtex-product-summary-2-x-productBrandName">Adidas</span></div>
+                <h3 class="vtex-product-summary-2-x-nameContainer">
+                  <span class="vtex-product-summary-2-x-productBrand vtex-product-summary-2-x-brandName t-body">Adidas Vibes Smooth Pace EDP</span>
+                </h3>
+                <span class="price">$ 21.450</span>
+              </a>
+            </div>
+            <div class="vtex-product-summary-2-x-containerNormal">
+              <a class="vtex-product-summary-2-x-clearLink" aria-label="Dylan Blush Pink EDP 100 ml">
+                <h3 class="vtex-product-summary-2-x-nameContainer">
+                  <span class="vtex-product-summary-2-x-productBrand vtex-product-summary-2-x-brandName t-body">Dylan Blush Pink EDP 100 ml</span>
+                </h3>
+                <span class="price">$ 328.000</span>
+              </a>
+            </div>
+          </div>
+        </body></html>
+        "##;
+    let detection = detect_grid(html).expect("grid should be detected");
+    // Brand from the VTEX productBrandName element is prepended.
+    assert_eq!(detection.products[0].name, "Moschino Gold Fresh Couture EDP");
+    // Brand already present in the name is not duplicated.
+    assert_eq!(detection.products[1].name, "Adidas Vibes Smooth Pace EDP");
+    // No brand element (only the productBrand/brandName name span) -> unchanged.
+    assert_eq!(detection.products[2].name, "Dylan Blush Pink EDP 100 ml");
+}
+
+#[test]
+fn magento_brand_strong_is_prepended_when_missing_from_name() {
+    let html = r##"
+        <html><body>
+          <div class="products wrapper mode-grid products-grid">
+            <ul role="list">
+              <li>
+                <strong class="product brand product-item-brand"><a class="product-item-link" href="/brands/x">RABANNE</a></strong>
+                <a class="product-item-link" data-role="product-item-name" href="/a">FAME COUTURE EDP 80ML</a>
+                <div class="price-box"><span data-price-type="finalPrice"><span class="price">$ 264.000</span></span></div>
+              </li>
+              <li>
+                <strong class="product brand product-item-brand"><a class="product-item-link" href="/brands/y">CALVIN KLEIN</a></strong>
+                <a class="product-item-link" data-role="product-item-name" href="/b">CK ONE EDT 100ML</a>
+                <div class="price-box"><span data-price-type="finalPrice"><span class="price">$ 179.955</span></span></div>
+              </li>
+            </ul>
+          </div>
+        </body></html>
+        "##;
+    let detection = detect_grid(html).expect("grid should be detected");
+    assert_eq!(detection.products[0].name, "RABANNE FAME COUTURE EDP 80ML");
+    assert_eq!(
+        detection.products[1].name,
+        "CALVIN KLEIN CK ONE EDT 100ML"
+    );
 }
 
 #[test]

@@ -122,3 +122,76 @@ fn resolve_brand<'a>(
     }
     best_match(&pp.name, brand_candidates, brand_coverage, BRAND_MIN_SCORE).map(|(id, _, _)| id)
 }
+
+/// A provider product whose stored name is missing the brand of its linked
+/// canonical product. The provider site renders the brand, so the extractor
+/// should have included it — every row here is a candidate extractor bug.
+#[derive(Debug, PartialEq, Eq)]
+pub struct MissingBrandRow {
+    /// The provider product record id.
+    pub provider_product_id: String,
+    /// The provider record id.
+    pub provider_id: String,
+    /// The provider's hostname.
+    pub provider_domain: String,
+    /// The stored provider product name.
+    pub name: String,
+    /// The linked canonical product id.
+    pub product_id: String,
+    /// The canonical product's brand, absent from `name`.
+    pub brand: String,
+}
+
+/// Outcome of one `-report-missing-brands` run.
+#[derive(Debug, PartialEq, Eq)]
+pub struct MissingBrandReport {
+    /// Provider products with a `product_id` link.
+    pub matched: usize,
+    /// The subset whose name is missing the linked product's brand.
+    pub affected: Vec<MissingBrandRow>,
+}
+
+/// Lists provider products linked to a canonical product whose stored name
+/// does not contain that product's brand (`brand_coverage < 1.0`, so partial
+/// brand tokens don't count as present). Names that already carry the brand
+/// (all brand tokens, case-insensitive) are not reported.
+pub fn missing_brands(store: &impl PriceStore) -> Result<MissingBrandReport, PriceStoreError> {
+    let provider_products = store.list_provider_products()?;
+    let products = store.list_all_products()?;
+    let providers = store.list_providers()?;
+    let brand_by_product: HashMap<&str, &str> = products
+        .iter()
+        .map(|p| (p.id.as_str(), p.brand.trim()))
+        .collect();
+    let domain_by_provider: HashMap<&str, &str> = providers
+        .iter()
+        .map(|p| (p.id.as_str(), p.domain.as_str()))
+        .collect();
+    let mut affected = Vec::new();
+    let mut matched = 0;
+    for pp in &provider_products {
+        let Some(product_id) = pp.product_id.as_deref().filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        matched += 1;
+        let Some(brand) = brand_by_product.get(product_id).copied() else {
+            continue;
+        };
+        if brand.is_empty() || brand_coverage(&pp.name, brand) >= 1.0 {
+            continue;
+        }
+        affected.push(MissingBrandRow {
+            provider_product_id: pp.id.clone(),
+            provider_id: pp.provider_id.clone(),
+            provider_domain: domain_by_provider
+                .get(pp.provider_id.as_str())
+                .copied()
+                .unwrap_or_default()
+                .to_string(),
+            name: pp.name.clone(),
+            product_id: product_id.to_string(),
+            brand: brand.to_string(),
+        });
+    }
+    Ok(MissingBrandReport { matched, affected })
+}

@@ -55,7 +55,13 @@ arbitrary e-commerce HTML and captures them as JSON. Uses `thirtyfour`
    unit), the size is taken from the card's SKU selector (the `--selected`
    option first), then from the product URL slug, then by appending `ml` to a
    trailing bare number (e.g. `edp 50` → `edp 50 ml`). Names that already
-   carry a size (`100 ml`, `X50ML`, `132 g`, …) are left unchanged.
+   carry a size (`100 ml`, `X50ML`, `132 g`, …) are left unchanged. Finally
+   `enrich_name_with_brand` prepends the brand the site renders as a separate
+   card element — VTEX `productBrandName`/`productBrandContainer`, Magento/Hyva
+   `<strong class="product brand">`/`product-item-brand`, and `__brand`-suffixed
+   headings (e.g. compreahora) — unless every brand token is already present in
+   the name (so "…Dove…" and "Adidas …" aren't duplicated, and sites without
+   brand markup like todoslosperfumes stay unchanged).
 
 Supporting heuristics worth knowing:
 - `card_of` groups price divs into per-product cards; it descends one level
@@ -174,6 +180,12 @@ password = "change-me"          # required; first run writes a commented templat
   PocketBase serializes unset relations as `""`, not `null`, so `Some("")` is
   treated as "unset" throughout. The `brand_id` field is added by migration
   `1787000003_provider_product_brand.js`.
+- `cargo run -- -report-missing-brands` lists every provider product linked to a
+  canonical product (`product_id` set) whose stored name does not contain that
+  product's brand (token coverage < 1.0). These are candidate extractor bugs:
+  the provider site renders the brand in the card, so the scraped name should
+  carry it. Prints `<provider_domain>\t<name>\t<brand>\t<product_id>\t<provider_product_id>`
+  per affected row and exits.
 - `cargo run -- -matrix-server` serves the product × provider price matrix for
   the local Flutter UI. Binds to `127.0.0.1:8091` (override
   `PRICE_HUNTER_MATRIX_PORT`) and rebuilds the matrix from PocketBase on every

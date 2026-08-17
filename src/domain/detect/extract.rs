@@ -8,6 +8,7 @@ use scraper::node::Node;
 
 use super::prices::{classify_div, contains_confident_price};
 use super::{Price, Product};
+use crate::domain::matching::brand_coverage;
 
 pub(super) fn extract_products(
     html: &Html,
@@ -36,13 +37,14 @@ pub(super) fn extract_products(
             let price = current_price_of(html, price_div_id).or_else(|| prices.last().cloned())?;
             let card_id = card_of(html, price_div_id, container_id);
             let url = product_link(html, card_id);
+            let name = enrich_name_with_size(
+                html,
+                card_id,
+                guess_name(html, price_div_id, container_id),
+                url.as_deref().unwrap_or(""),
+            );
             Some(Product {
-                name: enrich_name_with_size(
-                    html,
-                    card_id,
-                    guess_name(html, price_div_id, container_id),
-                    url.as_deref().unwrap_or(""),
-                ),
+                name: enrich_name_with_brand(html, card_id, name),
                 price_text: price.text.clone(),
                 price: price.value,
                 url,
@@ -253,6 +255,73 @@ pub(super) fn enrich_name_with_size(
         return format!("{name} ml");
     }
     name
+}
+
+/// Prepends the brand the site renders inside the card (as a separate element)
+/// to the extracted name. Names that already carry the brand — every brand
+/// token present in the name, case-insensitive — are left unchanged, so
+/// sites that repeat the brand in the product title ("…Dove…", "Adidas …")
+/// don't get a duplicate.
+pub(super) fn enrich_name_with_brand(html: &Html, card_id: NodeId, name: String) -> String {
+    let Some(brand) = brand_of(html, card_id) else {
+        return name;
+    };
+    if brand_coverage(&name, &brand) >= 1.0 {
+        return name;
+    }
+    format!("{brand} {name}")
+}
+
+/// Finds the brand text rendered inside the product card. Recognized markup:
+/// VTEX (`productBrandName` / `productBrandContainer`), Magento/Hyva
+/// (`product-item-brand`), and `__brand`-suffixed headings (e.g. compreahora's
+/// `list-item-ar-list-item__brand-HYP`). The VTEX product-name spans
+/// (`productBrand` / `brandName`) are deliberately not brand elements.
+fn brand_of(html: &Html, card_id: NodeId) -> Option<String> {
+    let node = html.tree.get(card_id)?;
+    for n in node.descendants() {
+        let Node::Element(el) = n.value() else {
+            continue;
+        };
+        if !is_brand_element(el) {
+            continue;
+        }
+        let text: String = n
+            .descendants()
+            .filter_map(|x| match x.value() {
+                Node::Text(t) => Some(&*t.text),
+                _ => None,
+            })
+            .collect();
+        let text = collapse_whitespace(&text);
+        if text.is_empty()
+            || !text.chars().any(char::is_alphanumeric)
+            || contains_confident_price(&text)
+            || text.chars().count() > 32
+        {
+            continue;
+        }
+        return Some(text);
+    }
+    None
+}
+
+/// Whether `el` looks like a brand element rather than the product name.
+/// Recognized: VTEX (`productBrandName` / `productBrandContainer`),
+/// Magento/Hyva (`product-item-brand`, or a `<strong class="product brand">`),
+/// and `__brand`-suffixed headings (e.g. compreahora's
+/// `list-item-ar-list-item__brand-HYP`). The VTEX product-name spans
+/// (`productBrand` / `brandName`) are deliberately not brand elements.
+fn is_brand_element(el: &scraper::node::Element) -> bool {
+    let classes: Vec<&str> = el.classes().collect();
+    classes.iter().any(|c| {
+        c.contains("productBrandName")
+            || c.contains("productBrandContainer")
+            || c.contains("product-item-brand")
+            || c.contains("__brand")
+    }) || (el.name() == "strong"
+        && classes.contains(&"brand")
+        && classes.contains(&"product"))
 }
 
 fn collapse_whitespace(text: &str) -> String {

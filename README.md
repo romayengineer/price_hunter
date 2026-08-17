@@ -117,12 +117,12 @@ cargo test
 ```
 
 Live integration tests are `#[ignore]`d and require network access (and, for
-compreahora, a logged-in session in `profiles/chrome`):
+compreahora/parfumerie, a logged-in browser session in `profiles/chrome`):
 
 ```sh
-cargo test --test compreahora_live -- --ignored
-cargo test --test fabilu -- --ignored
-cargo test --test beauty24 -- --ignored
+cargo test --test live compreahora -- --ignored
+cargo test --test live beauty24 -- --ignored
+cargo test --test live fabilu -- --ignored
 ```
 
 The store live test requires a running PocketBase with the collections created
@@ -131,7 +131,7 @@ The store live test requires a running PocketBase with the collections created
 ```sh
 # Start PocketBase first, then:
 POCKETBASE_SUPERUSER_PASSWORD='<password>' \
-  cargo test --test store_live -- --ignored
+  cargo test --test live store -- --ignored
 ```
 
 Set `PRICE_HUNTER_DUMP_HTML=1` when running the compreahora live test to save

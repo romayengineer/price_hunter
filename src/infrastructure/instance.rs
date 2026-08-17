@@ -169,8 +169,13 @@ fn wait_for_profile_release() {
 mod tests {
     use super::*;
 
+    /// Serializes the two env-mutating tests: they read/write the process-global
+    /// `XDG_CONFIG_HOME` and would race when the harness runs them in parallel.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn pid_path_defaults_to_dot_config() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::remove_var("XDG_CONFIG_HOME");
         }
@@ -185,6 +190,7 @@ mod tests {
 
     #[test]
     fn pid_path_honors_xdg_config_home() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", "/tmp/ph-config");
         }

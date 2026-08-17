@@ -206,31 +206,42 @@ password = "change-me"          # required; first run writes a commented templat
 - `cargo test` runs the fixture-based detection tests (no network/browser needed)
   plus the lib unit tests. Always run `cargo test` AND `cargo clippy --all-targets`
   after changing code.
-- Fixture tests live in `tests/<site>.rs` and share `tests/common/mod.rs`
+- The integration test tree is grouped by concern under `tests/`:
+  - `tests/sites/<site>.rs` — offline fixture tests (aggregated by `tests/sites.rs`);
+    run all with `cargo test` or one site with `cargo test --test sites <site>`.
+  - `tests/live/` — `#[ignore]`d tests that need network, a browser session or
+    PocketBase (aggregated by `tests/live.rs`; run with
+    `cargo test --test live -- --ignored`).
+  - `tests/diagnostics/` — env-gated debugging tools (aggregated by
+    `tests/diagnostics.rs`; no-ops without their env var).
+  - `tests/common/mod.rs` — shared assertion helpers; `tests/fixtures/<site>.html`
+    — saved page dumps.
+- Fixture tests share `tests/common/mod.rs`
   (`assert_fixture(path, &products(), container_class)`, which checks every
   expected `Product` (name + price) exists and the container has the class).
   Expected products use `price_text: String::new()` — only name and price are
-  compared. Fixtures live in `tests/fixtures/<site>.html`.
+  compared.
 - Live integration tests are `#[ignore]`d and require network plus a real session:
-  - `cargo test --test compreahora_live -- --ignored` opens Chrome using the
+  - `cargo test --test live compreahora -- --ignored` opens Chrome using the
     persistent `profiles/chrome` session, visits the perfumeria category, and
     asserts names + prices are extracted. Set `PRICE_HUNTER_DUMP_HTML=1` to save
     the rendered page to `captures/diagnostic/` for debugging.
-  - `cargo test --test fabilu -- --ignored` fetches fabilu over plain HTTP.
-  - `cargo test --test parfumerie_live -- --ignored` opens Chrome, visits the
+  - `cargo test --test live beauty24 -- --ignored` and
+    `cargo test --test live fabilu -- --ignored` fetch the site over plain HTTP.
+  - `cargo test --test live parfumerie -- --ignored` opens Chrome, visits the
     `/fragancias` category, scrolls to trigger infinite scroll, and asserts at
     least 10 products with names + prices.
-  - `cargo test --test store_live -- --ignored` requires a running PocketBase
+  - `cargo test --test live store -- --ignored` requires a running PocketBase
     (see `pocketbase/scripts/setup_pocketbase.sh`) and round-trips a capture +
     products through the Record API only — verifies the store works without any
     SQL or DB-file access.
 - Diagnostic tools (keep these; they are no-ops without their env var):
-  - `PRICE_HUNTER_PROBE_FIXTURE=<path> cargo test --test probe -- --nocapture`
+  - `PRICE_HUNTER_PROBE_FIXTURE=<path> cargo test --test diagnostics probe -- --nocapture`
     dumps the full `Detection` (container + products) for any HTML file.
-  - `PRICE_HUNTER_MEASURE_FIXTURE=<path> cargo test --test measure -- --nocapture`
+  - `PRICE_HUNTER_MEASURE_FIXTURE=<path> cargo test --test diagnostics measure -- --nocapture`
     ranks every candidate container (p/d/density + selected flag) — use when the
     wrong container is picked.
-  - `PRICE_HUNTER_LIVE_URL=<url> PRICE_HUNTER_DUMP_HTML=1 cargo test --test live_probe -- --ignored -- --nocapture`
+  - `PRICE_HUNTER_LIVE_URL=<url> PRICE_HUNTER_DUMP_HTML=1 cargo test --test diagnostics live_probe -- --ignored -- --nocapture`
     opens Chrome, navigates, scrolls, optionally dumps the rendered HTML, and
     prints the detected container + products.
 - Close any `cargo run` browser first — Chrome locks `profiles/chrome` while
@@ -244,7 +255,8 @@ There is a skill and a command for this; use them instead of improvising:
 - Command: `/new-fixture-test tests/fixtures/<site>.html` runs the whole flow:
   map the fixture, count cards, extract expected products, probe the pipeline,
   fix `detect.rs` only at the gap (with a fallback + unit test), write
-  `tests/<site>.rs`, then verify `cargo test` + `cargo clippy --all-targets`.
+  `tests/sites/<site>.rs` (and register it in `tests/sites/mod.rs`), then verify
+  `cargo test` + `cargo clippy --all-targets`.
 
 Workflow summary (details in the skill):
 1. Save the site's rendered grid as `tests/fixtures/<site>.html`.
@@ -252,9 +264,9 @@ Workflow summary (details in the skill):
    `rg -c`.
 3. Extract expected products (one-off python script; templates in the skill for
    PrestaShop and Magento/Hyva markup).
-4. Probe with `probe.rs`; if detection differs from the fixture, use
-   `measure.rs` / `live_probe.rs` to diagnose and fix `detect.rs` with a
-   backward-compatible fallback.
+4. Probe with `tests/diagnostics/probe.rs`; if detection differs from the
+   fixture, use `tests/diagnostics/measure.rs` / `live_probe.rs` to diagnose and
+   fix `detect.rs` with a backward-compatible fallback.
 5. Write the fixture test and a `detect.rs` unit test for any new markup quirk.
 
 Known markup classes the detector already handles: PrestaShop

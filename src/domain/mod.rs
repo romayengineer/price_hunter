@@ -4,6 +4,7 @@
 //! which infrastructure adapters implement.
 
 pub mod detect;
+pub mod error;
 pub mod matching;
 pub mod model;
 pub mod ports;

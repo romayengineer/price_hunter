@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::Result;
-
+use crate::domain::error::PriceStoreError;
 use crate::domain::matching::{MIN_SCORE, MatchCandidate, assign_group, similarity};
 use crate::domain::model::{MatchInsert, ProductRow, ProviderProductRow};
 use crate::domain::ports::PriceStore;
@@ -14,7 +13,7 @@ use crate::domain::ports::PriceStore;
 /// After the cache is up to date, the best match per provider product is
 /// linked (per-provider exclusivity) using the stored scores at or above
 /// `MIN_SCORE`. Returns how many provider products were matched.
-pub fn match_products(store: &impl PriceStore) -> Result<usize> {
+pub fn match_products(store: &impl PriceStore) -> Result<usize, PriceStoreError> {
     let products = store.list_products()?;
     let provider_products = store.list_provider_products()?;
 
@@ -53,7 +52,7 @@ pub fn match_products(store: &impl PriceStore) -> Result<usize> {
 /// A quick way to refresh links after scraping new data without waiting
 /// for the full comparison pass — an interrupted `-match-products` can no
 /// longer leave the matrix stale.
-pub fn link_matches(store: &impl PriceStore) -> Result<usize> {
+pub fn link_matches(store: &impl PriceStore) -> Result<usize, PriceStoreError> {
     let provider_products = store.list_provider_products()?;
     let candidates = store.list_above_threshold_candidates()?;
     finish_linking(store, &provider_products, &candidates)
@@ -65,7 +64,7 @@ fn finish_linking(
     store: &impl PriceStore,
     provider_products: &[ProviderProductRow],
     candidates: &[MatchCandidate],
-) -> Result<usize> {
+) -> Result<usize, PriceStoreError> {
     let provider_of: HashMap<&str, &str> = provider_products
         .iter()
         .map(|p| (p.id.as_str(), p.provider_id.as_str()))
@@ -89,7 +88,7 @@ fn backfill_comparisons(
     products: &[ProductRow],
     stored_pairs: &mut HashSet<(String, String)>,
     candidates: &mut Vec<MatchCandidate>,
-) -> Result<usize> {
+) -> Result<usize, PriceStoreError> {
     let total = provider_products.len() * products.len();
     let mut inserted = 0;
     let mut done = 0usize;
@@ -116,7 +115,7 @@ fn backfill_pair(
     product: &ProductRow,
     stored_pairs: &mut HashSet<(String, String)>,
     candidates: &mut Vec<MatchCandidate>,
-) -> Result<usize> {
+) -> Result<usize, PriceStoreError> {
     let pair = (pp.id.clone(), product.id.clone());
     if stored_pairs.contains(&pair) {
         return Ok(0);
@@ -144,7 +143,7 @@ fn link_winners(
     store: &impl PriceStore,
     candidates: &[MatchCandidate],
     provider_of: &HashMap<&str, &str>,
-) -> Result<usize> {
+) -> Result<usize, PriceStoreError> {
     let grouped = group_by_provider(candidates, provider_of);
     let mut matched = 0;
     for group in grouped.values() {
@@ -172,7 +171,10 @@ fn group_by_provider(
 }
 
 /// Assigns and links the winners of one provider group.
-fn apply_group(store: &impl PriceStore, group: &[MatchCandidate]) -> Result<usize> {
+fn apply_group(
+    store: &impl PriceStore,
+    group: &[MatchCandidate],
+) -> Result<usize, PriceStoreError> {
     let mut matched = 0;
     for winner in assign_group(group) {
         store.link_product(&winner)?;

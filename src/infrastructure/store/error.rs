@@ -4,6 +4,8 @@
 
 use thiserror::Error;
 
+use crate::domain::error::PriceStoreError;
+
 /// Errors surfaced by the store's public entry points.
 #[derive(Debug, Error)]
 pub enum Error {
@@ -22,5 +24,14 @@ pub enum Error {
 impl From<anyhow::Error> for Error {
     fn from(e: anyhow::Error) -> Self {
         Error::Http(format!("{e:#}"))
+    }
+}
+
+/// Maps the adapter's `anyhow`-typed internals into the domain port's typed
+/// error at the boundary, so `?` in the [`PriceStore`](crate::domain::ports::PriceStore)
+/// impls converts automatically without hand-rolled `map_err` everywhere.
+impl From<anyhow::Error> for PriceStoreError {
+    fn from(e: anyhow::Error) -> Self {
+        PriceStoreError::Request(format!("{e:#}"))
     }
 }

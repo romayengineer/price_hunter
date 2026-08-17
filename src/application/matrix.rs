@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
-
+use crate::domain::error::PriceStoreError;
 use crate::domain::model::{
     Matrix, MatrixProvider, MatrixRow, ProductRow, ProviderProductRow, ProviderRow,
 };
@@ -12,7 +11,7 @@ use crate::domain::time::{iso8601, now_secs};
 /// price at two or more distinct providers, one column per provider, and
 /// the latest scraped price in each cell. When a product maps to several
 /// listings on the same provider the lowest price wins.
-pub fn matrix(store: &impl PriceStore) -> Result<Matrix> {
+pub fn matrix(store: &impl PriceStore) -> Result<Matrix, PriceStoreError> {
     let products = store.list_all_products()?;
     let provider_products = store.list_provider_products()?;
     let latest_prices = store.latest_price_per_provider_product()?;

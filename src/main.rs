@@ -231,7 +231,13 @@ async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
         .await
         .map(|u| u.to_string())
         .unwrap_or_default();
-    let path = capture::write_capture("captures", &url, detection);
+    let path = match capture::write_capture("captures", &url, detection) {
+        Ok(path) => path,
+        Err(e) => {
+            log::error!("Could not write capture for {url}: {e}");
+            return;
+        }
+    };
     println!(
         "Captured {} products to {}",
         detection.products.len(),

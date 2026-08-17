@@ -11,6 +11,7 @@ use super::types::{
     PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION, ProductLinkPayload, ProviderMatchPayload,
     ProviderPriceRow,
 };
+use crate::domain::error::PriceStoreError;
 use crate::domain::matching::{MIN_SCORE, MatchCandidate};
 use crate::domain::model::{
     BrandRow, MatchInsert, ProductRow, ProviderMatchRow, ProviderProductRow, ProviderRow,
@@ -96,27 +97,27 @@ impl Store {
 }
 
 impl PriceStore for Store {
-    fn list_products(&self) -> Result<Vec<ProductRow>> {
-        self.list_all(PRODUCTS_COLLECTION, Some("active=true"), None, 100)
+    fn list_products(&self) -> Result<Vec<ProductRow>, PriceStoreError> {
+        Ok(self.list_all(PRODUCTS_COLLECTION, Some("active=true"), None, 100)?)
     }
 
-    fn list_all_products(&self) -> Result<Vec<ProductRow>> {
-        self.list_all(PRODUCTS_COLLECTION, None, None, 100)
+    fn list_all_products(&self) -> Result<Vec<ProductRow>, PriceStoreError> {
+        Ok(self.list_all(PRODUCTS_COLLECTION, None, None, 100)?)
     }
 
-    fn list_provider_products(&self) -> Result<Vec<ProviderProductRow>> {
-        self.list_all(PROVIDER_PRODUCTS_COLLECTION, None, None, 100)
+    fn list_provider_products(&self) -> Result<Vec<ProviderProductRow>, PriceStoreError> {
+        Ok(self.list_all(PROVIDER_PRODUCTS_COLLECTION, None, None, 100)?)
     }
 
-    fn list_providers(&self) -> Result<Vec<ProviderRow>> {
-        self.list_all(PROVIDERS_COLLECTION, None, None, 100)
+    fn list_providers(&self) -> Result<Vec<ProviderRow>, PriceStoreError> {
+        Ok(self.list_all(PROVIDERS_COLLECTION, None, None, 100)?)
     }
 
-    fn list_brands(&self) -> Result<Vec<BrandRow>> {
-        self.list_all(BRANDS_COLLECTION, None, None, 500)
+    fn list_brands(&self) -> Result<Vec<BrandRow>, PriceStoreError> {
+        Ok(self.list_all(BRANDS_COLLECTION, None, None, 500)?)
     }
 
-    fn list_above_threshold_candidates(&self) -> Result<Vec<MatchCandidate>> {
+    fn list_above_threshold_candidates(&self) -> Result<Vec<MatchCandidate>, PriceStoreError> {
         let filter = format!("score>={MIN_SCORE}");
         let rows = self.list_all::<ProviderMatchRow>(
             PROVIDER_PRODUCT_MATCHES_COLLECTION,
@@ -143,7 +144,7 @@ impl PriceStore for Store {
     fn list_all_matches(
         &self,
         provider_products: &[ProviderProductRow],
-    ) -> Result<Vec<ProviderMatchRow>> {
+    ) -> Result<Vec<ProviderMatchRow>, PriceStoreError> {
         const WORKERS: usize = 16;
         let base = format!(
             "{}/api/collections/{}/records",
@@ -202,7 +203,7 @@ impl PriceStore for Store {
         provider_product_id: &str,
         product_id: &str,
         score: f64,
-    ) -> Result<MatchInsert> {
+    ) -> Result<MatchInsert, PriceStoreError> {
         let url = format!(
             "{}/api/collections/{}/records",
             self.client.base_url, PROVIDER_PRODUCT_MATCHES_COLLECTION
@@ -231,7 +232,8 @@ impl PriceStore for Store {
                     return Err(anyhow::anyhow!(
                         "could not write match: HTTP {} (pair {provider_product_id} x {product_id})",
                         response.status()
-                    ));
+                    )
+                    .into());
                 }
                 Ok(MatchInsert::Created)
             }
@@ -242,15 +244,16 @@ impl PriceStore for Store {
                 }
                 Err(anyhow::anyhow!(
                     "could not write match: HTTP {status} body: {detail} (pair {provider_product_id} x {product_id})",
-                ))
+                )
+                .into())
             }
-            Err(e) => Err(anyhow::anyhow!("could not write match: {e}")),
+            Err(e) => Err(anyhow::anyhow!("could not write match: {e}").into()),
         }
     }
 
     /// Nulls out `product_id` on every provider product so linking can be
     /// recomputed from the stored comparison cache. Match rows are kept.
-    fn unlink_all(&self, provider_products: &[ProviderProductRow]) -> Result<()> {
+    fn unlink_all(&self, provider_products: &[ProviderProductRow]) -> Result<(), PriceStoreError> {
         for pp in provider_products {
             self.client
                 .records(PROVIDER_PRODUCTS_COLLECTION)
@@ -263,7 +266,7 @@ impl PriceStore for Store {
 
     /// Links a winning provider product to its canonical product and marks the
     /// match row as confirmed.
-    fn link_product(&self, winner: &MatchCandidate) -> Result<()> {
+    fn link_product(&self, winner: &MatchCandidate) -> Result<(), PriceStoreError> {
         self.client
             .records(PROVIDER_PRODUCTS_COLLECTION)
             .update(
@@ -278,7 +281,11 @@ impl PriceStore for Store {
         Ok(())
     }
 
-    fn update_brand_link(&self, provider_product_id: &str, brand_id: Option<&str>) -> Result<()> {
+    fn update_brand_link(
+        &self,
+        provider_product_id: &str,
+        brand_id: Option<&str>,
+    ) -> Result<(), PriceStoreError> {
         self.client
             .records(PROVIDER_PRODUCTS_COLLECTION)
             .update(
@@ -288,11 +295,11 @@ impl PriceStore for Store {
                 },
             )
             .call()
-            .map_err(|e| anyhow::anyhow!("could not update brand link: {e}"))
-            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!("could not update brand link: {e}"))?;
+        Ok(())
     }
 
-    fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>> {
+    fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>, PriceStoreError> {
         let rows = self.list_all::<ProviderPriceRow>(
             PROVIDER_PRODUCT_PRICES_COLLECTION,
             None,

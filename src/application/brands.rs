@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
-
+use crate::domain::error::PriceStoreError;
 use crate::domain::matching::{BRAND_MIN_SCORE, best_match, brand_coverage};
 use crate::domain::model::ProviderProductRow;
 use crate::domain::ports::PriceStore;
@@ -20,7 +19,7 @@ pub struct BrandMatchSummary {
 /// fuzzy-matched against the brand table by token coverage. Unresolved
 /// products keep `brand_id = null` so they can be found and their brands
 /// added to the table.
-pub fn match_brands(store: &impl PriceStore) -> Result<BrandMatchSummary> {
+pub fn match_brands(store: &impl PriceStore) -> Result<BrandMatchSummary, PriceStoreError> {
     let provider_products = store.list_provider_products()?;
     let products = store.list_products()?;
     let brands = store.list_brands()?;
@@ -81,7 +80,7 @@ fn assign_brand(
     pp: &ProviderProductRow,
     product_brand: &HashMap<&str, Option<&str>>,
     brand_candidates: &[(String, String)],
-) -> Result<(BrandSource, usize)> {
+) -> Result<(BrandSource, usize), PriceStoreError> {
     let target = resolve_brand(pp, product_brand, brand_candidates);
     // PocketBase serializes unset relations as `""`, so an empty value
     // counts as "not assigned" for change detection.

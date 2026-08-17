@@ -32,18 +32,20 @@ pub fn render(
     serde_json::to_string_pretty(&capture)
 }
 
-pub fn write_capture(dir: &str, url: &str, detection: &Detection) -> PathBuf {
+/// Renders a capture as pretty-printed JSON and writes it under
+/// `dir/<host>/capture-<timestamp>.json` (falls back to `dir/` when the URL
+/// has no host). Returns the path written.
+pub fn write_capture(dir: &str, url: &str, detection: &Detection) -> std::io::Result<PathBuf> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     let subdir = capture_dir(dir, url);
     let path = subdir.join(format!("capture-{now}.json"));
-    let _ = fs::create_dir_all(&subdir);
-    if let Ok(json) = render(url, now, detection) {
-        let _ = fs::write(&path, json);
-    }
-    path
+    fs::create_dir_all(&subdir)?;
+    let json = render(url, now, detection).map_err(std::io::Error::other)?;
+    fs::write(&path, json)?;
+    Ok(path)
 }
 
 fn capture_dir(base: &str, url: &str) -> PathBuf {

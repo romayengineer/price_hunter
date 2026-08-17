@@ -5,3 +5,4 @@
 pub mod brands;
 pub mod matching;
 pub mod matrix;
+pub mod reporter;

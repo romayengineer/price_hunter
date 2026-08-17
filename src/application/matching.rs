@@ -1,9 +1,32 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::application::reporter::Reporter;
 use crate::domain::error::PriceStoreError;
 use crate::domain::matching::{MIN_SCORE, MatchCandidate, assign_group, similarity};
 use crate::domain::model::{MatchInsert, ProductRow, ProviderProductRow};
 use crate::domain::ports::PriceStore;
+
+/// Outcome of one `-match-products` run.
+#[derive(Debug)]
+pub struct MatchSummary {
+    /// New comparisons scored and stored during the backfill.
+    pub computed: usize,
+    /// Comparisons already present from a previous run (skipped).
+    pub already_stored: usize,
+    /// Provider products considered for linking.
+    pub provider_products: usize,
+    /// Provider products linked to a canonical product.
+    pub matched: usize,
+}
+
+/// Outcome of one `-link-matches` run (no backfill).
+#[derive(Debug)]
+pub struct LinkSummary {
+    /// Provider products considered for linking.
+    pub provider_products: usize,
+    /// Provider products linked to a canonical product.
+    pub matched: usize,
+}
 
 /// Runs the fuzzy matcher between provider products and canonical
 /// products. Every (provider product, canonical product) comparison is
@@ -12,8 +35,11 @@ use crate::domain::ports::PriceStore;
 /// immediately (one insert at a time) so a crash never loses progress.
 /// After the cache is up to date, the best match per provider product is
 /// linked (per-provider exclusivity) using the stored scores at or above
-/// `MIN_SCORE`. Returns how many provider products were matched.
-pub fn match_products(store: &impl PriceStore) -> Result<usize, PriceStoreError> {
+/// `MIN_SCORE`. Progress is reported through `reporter`.
+pub fn match_products(
+    store: &impl PriceStore,
+    reporter: &mut dyn Reporter,
+) -> Result<MatchSummary, PriceStoreError> {
     let products = store.list_products()?;
     let provider_products = store.list_provider_products()?;
 
@@ -32,19 +58,22 @@ pub fn match_products(store: &impl PriceStore) -> Result<usize, PriceStoreError>
         })
         .collect();
 
-    let inserted = backfill_comparisons(
+    let computed = backfill_comparisons(
         store,
         &provider_products,
         &products,
         &mut stored_pairs,
         &mut candidates,
+        reporter,
     )?;
-    println!(
-        "Computed {inserted} new comparisons ({} already stored)",
-        stored.len()
-    );
+    let (matched, total) = finish_linking(store, &provider_products, &candidates)?;
 
-    finish_linking(store, &provider_products, &candidates)
+    Ok(MatchSummary {
+        computed,
+        already_stored: stored.len(),
+        provider_products: total,
+        matched,
+    })
 }
 
 /// Re-links provider products to canonical products using only the
@@ -52,57 +81,56 @@ pub fn match_products(store: &impl PriceStore) -> Result<usize, PriceStoreError>
 /// A quick way to refresh links after scraping new data without waiting
 /// for the full comparison pass — an interrupted `-match-products` can no
 /// longer leave the matrix stale.
-pub fn link_matches(store: &impl PriceStore) -> Result<usize, PriceStoreError> {
+pub fn link_matches(store: &impl PriceStore) -> Result<LinkSummary, PriceStoreError> {
     let provider_products = store.list_provider_products()?;
     let candidates = store.list_above_threshold_candidates()?;
-    finish_linking(store, &provider_products, &candidates)
+    let (matched, total) = finish_linking(store, &provider_products, &candidates)?;
+    Ok(LinkSummary {
+        provider_products: total,
+        matched,
+    })
 }
 
 /// Clears `product_id` on every provider product and re-assigns winners
-/// from `candidates`, printing how many provider products were matched.
+/// from `candidates`. Returns `(matched, provider_products)`.
 fn finish_linking(
     store: &impl PriceStore,
     provider_products: &[ProviderProductRow],
     candidates: &[MatchCandidate],
-) -> Result<usize, PriceStoreError> {
+) -> Result<(usize, usize), PriceStoreError> {
     let provider_of: HashMap<&str, &str> = provider_products
         .iter()
         .map(|p| (p.id.as_str(), p.provider_id.as_str()))
         .collect();
     store.unlink_all(provider_products)?;
     let matched = link_winners(store, candidates, &provider_of)?;
-    println!(
-        "Matched {matched} of {} provider products",
-        provider_products.len()
-    );
-    Ok(matched)
+    Ok((matched, provider_products.len()))
 }
 
 /// Scores and stores every (provider product, product) pair not already
 /// present in `stored_pairs`, one insert at a time. New above-threshold
 /// pairs are appended to `candidates`. Returns how many comparisons were
-/// computed. A live progress percentage is redrawn on the same line.
+/// computed.
 fn backfill_comparisons(
     store: &impl PriceStore,
     provider_products: &[ProviderProductRow],
     products: &[ProductRow],
     stored_pairs: &mut HashSet<(String, String)>,
     candidates: &mut Vec<MatchCandidate>,
+    reporter: &mut dyn Reporter,
 ) -> Result<usize, PriceStoreError> {
     let total = provider_products.len() * products.len();
-    let mut inserted = 0;
+    let mut computed = 0;
     let mut done = 0usize;
-    let mut last_pct = -1.0;
     for pp in provider_products {
         for product in products {
-            inserted += backfill_pair(store, pp, product, stored_pairs, candidates)?;
+            computed += backfill_pair(store, pp, product, stored_pairs, candidates)?;
             done += 1;
-            print_progress(done, total, &mut last_pct);
+            reporter.progress(done, total);
         }
     }
-    print_progress(total, total, &mut last_pct);
-    println!();
-    Ok(inserted)
+    reporter.progress(total, total);
+    Ok(computed)
 }
 
 /// Scores one pair unless it is already stored, writing the score
@@ -181,20 +209,4 @@ fn apply_group(
         matched += 1;
     }
     Ok(matched)
-}
-
-/// Redraws a `Progress: X.XX%` line in place (carriage return) without
-/// spamming the terminal — only rewrites when the rounded percentage changes.
-fn print_progress(done: usize, total: usize, last: &mut f64) {
-    if total == 0 {
-        return;
-    }
-    let pct = done as f64 * 100.0 / total as f64;
-    if (pct - *last).abs() < 0.005 {
-        return;
-    }
-    *last = pct;
-    use std::io::Write;
-    print!("\rProgress: {pct:.2}%");
-    let _ = std::io::stdout().flush();
 }

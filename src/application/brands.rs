@@ -11,6 +11,8 @@ pub struct BrandMatchSummary {
     pub matched_from_product: usize,
     pub matched_by_fuzzy: usize,
     pub unmatched: usize,
+    /// Provider products whose `brand_id` was written (changed).
+    pub updated: usize,
 }
 
 /// Assigns a brand to every provider product and writes it to
@@ -52,17 +54,12 @@ pub fn match_brands(store: &impl PriceStore) -> Result<BrandMatchSummary, PriceS
     }
 
     let total = provider_products.len();
-    let matched = matched_from_product + matched_by_fuzzy;
-    println!(
-        "Brand-matched {matched} of {total} provider products \
-         (product: {matched_from_product}, fuzzy: {matched_by_fuzzy}; {updated} updated)"
-    );
-    println!("Unmatched (brand_id null): {unmatched}");
     Ok(BrandMatchSummary {
         provider_products: total,
         matched_from_product,
         matched_by_fuzzy,
         unmatched,
+        updated,
     })
 }
 

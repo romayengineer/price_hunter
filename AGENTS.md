@@ -207,6 +207,10 @@ password = "change-me"          # required; first run writes a commented templat
   plus the lib unit tests. Always run `cargo test` AND `cargo clippy --all-targets`
   after changing code.
 - The integration test tree is grouped by concern under `tests/`:
+  - `tests/application/` — offline use-case tests that drive `application`
+    (`matching`, `brands`, `matrix`) through an in-memory [`PriceStore`] fake
+    (`tests/application/fakes.rs`) instead of PocketBase; aggregated by
+    `tests/application.rs`, run with `cargo test --test application`.
   - `tests/sites/<site>.rs` — offline fixture tests (aggregated by `tests/sites.rs`);
     run all with `cargo test` or one site with `cargo test --test sites <site>`.
   - `tests/live/` — `#[ignore]`d tests that need network, a browser session or

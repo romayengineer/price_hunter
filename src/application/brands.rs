@@ -1,3 +1,5 @@
+//! Use case: assign a brand to every provider product (`match_brands`).
+
 use std::collections::HashMap;
 
 use crate::domain::error::PriceStoreError;
@@ -7,9 +9,13 @@ use crate::domain::ports::PriceStore;
 
 /// Result of one `-match-brands` run.
 pub struct BrandMatchSummary {
+    /// Provider products considered.
     pub provider_products: usize,
+    /// Matched through a linked canonical product's brand.
     pub matched_from_product: usize,
+    /// Matched by fuzzy brand coverage.
     pub matched_by_fuzzy: usize,
+    /// Left without a brand.
     pub unmatched: usize,
     /// Provider products whose `brand_id` was written (changed).
     pub updated: usize,

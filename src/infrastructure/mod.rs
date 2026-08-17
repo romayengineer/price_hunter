@@ -9,3 +9,4 @@ pub mod export;
 pub mod instance;
 pub mod matrix_server;
 pub mod store;
+mod util;

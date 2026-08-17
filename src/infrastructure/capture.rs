@@ -1,3 +1,5 @@
+//! Renders detections as pretty JSON and writes them under `captures/<host>/`.
+
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -49,13 +51,12 @@ pub fn write_capture(dir: &str, url: &str, detection: &Detection) -> std::io::Re
 }
 
 fn capture_dir(base: &str, url: &str) -> PathBuf {
-    if let Some(host) = url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned))
-    {
-        return PathBuf::from(base).join(host);
+    let host = crate::infrastructure::util::host_of(url);
+    if host.is_empty() {
+        PathBuf::from(base)
+    } else {
+        PathBuf::from(base).join(host)
     }
-    PathBuf::from(base)
 }
 
 #[cfg(test)]

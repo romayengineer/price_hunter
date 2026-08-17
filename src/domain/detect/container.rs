@@ -67,13 +67,21 @@ fn ranked_containers(
     candidates
 }
 
+/// One candidate product-grid container, as ranked by
+/// [`diagnose_containers`].
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ContainerCandidate {
+    /// The candidate element's CSS classes.
     pub classes: Vec<String>,
+    /// The candidate element's `id` attribute, when present.
     pub id: Option<String>,
+    /// How many price divs the candidate contains.
     pub price_count: usize,
+    /// How many nested divs the candidate contains.
     pub div_count: usize,
+    /// `price_count / div_count`.
     pub density: f64,
+    /// Whether `detect_grid` would pick this candidate.
     pub selected: bool,
 }
 

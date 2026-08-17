@@ -25,8 +25,11 @@ pub fn full_name(brand: &str, name: &str, size: &str) -> String {
 /// One scored (provider product, canonical product) comparison.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MatchCandidate {
+    /// The provider product's id.
     pub provider_product_id: String,
+    /// The canonical product's id.
     pub product_id: String,
+    /// The similarity score (0.0–1.0).
     pub score: f64,
 }
 

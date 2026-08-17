@@ -1,3 +1,5 @@
+//! PocketBase adapter: persists detections through the Record API.
+
 use pocketbase_sdk::client::{Auth, Client};
 
 mod error;

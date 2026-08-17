@@ -5,9 +5,9 @@
 
 use std::collections::HashMap;
 
+use price_hunter::application::matrix::matrix;
 use price_hunter::domain::error::PriceStoreError;
 use price_hunter::domain::model::{ProductRow, ProviderProductRow, ProviderRow};
-use price_hunter::services::matrix::matrix;
 
 use super::fakes::FakeStore;
 

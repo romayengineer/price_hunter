@@ -1,3 +1,5 @@
+//! Use case: build the product × provider price matrix (`matrix`).
+
 use std::collections::HashMap;
 
 use crate::domain::error::PriceStoreError;

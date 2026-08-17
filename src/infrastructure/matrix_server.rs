@@ -1,3 +1,5 @@
+//! Serves the product × provider price matrix over HTTP for local UIs.
+
 use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::StatusCode;

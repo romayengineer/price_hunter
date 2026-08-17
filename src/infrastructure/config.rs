@@ -32,6 +32,7 @@ email = "admin@pricehunter.local"
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// PocketBase connection settings.
     pub pocketbase: Pocketbase,
 }
 
@@ -39,8 +40,11 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Pocketbase {
+    /// The PocketBase base URL.
     pub url: String,
+    /// The superuser email used to authenticate.
     pub email: String,
+    /// The superuser password; `None` when unset (authentication will fail).
     pub password: Option<String>,
 }
 

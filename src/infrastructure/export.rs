@@ -1,3 +1,5 @@
+//! Serializes the price matrix as CSV for spreadsheet consumption.
+
 use anyhow::Result;
 
 use crate::domain::model::Matrix;

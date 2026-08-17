@@ -1,9 +1,4 @@
-pub(super) fn host_of(url: &str) -> String {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_owned))
-        .unwrap_or_default()
-}
+pub(super) use crate::infrastructure::util::host_of;
 
 /// Escapes a value for use inside a PocketBase filter string literal. Single
 /// quotes and backslashes must be backslash-escaped or the filter parses
@@ -17,15 +12,6 @@ pub(super) fn escape_filter(value: &str) -> String {
 #[allow(clippy::cognitive_complexity)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn host_of_extracts_host() {
-        assert_eq!(
-            host_of("https://www.parfumerie.com.ar/fragancias"),
-            "www.parfumerie.com.ar"
-        );
-        assert_eq!(host_of("not a url"), "");
-    }
 
     #[test]
     fn escape_filter_handles_apostrophes_and_backslashes() {

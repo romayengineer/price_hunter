@@ -3,8 +3,8 @@
 
 #![allow(clippy::cognitive_complexity)]
 
+use price_hunter::application::brands::match_brands;
 use price_hunter::domain::model::{BrandRow, ProductRow, ProviderProductRow};
-use price_hunter::services::brands::match_brands;
 
 use super::fakes::FakeStore;
 

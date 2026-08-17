@@ -4,13 +4,14 @@
 //! Layered layout: `domain` (pure types + logic), `application` (use cases),
 //! `infrastructure` (adapters: PocketBase, browser, HTTP server, files).
 //! The `pub use` aliases below keep the historic public module paths (`detect`,
-//! `store`, `services`, ...) stable for the binary and integration tests.
+//! `store`, ...) stable for the binary and integration tests.
+
+#![deny(missing_docs)]
 
 pub mod application;
 pub mod domain;
 pub mod infrastructure;
 
-pub use crate::application as services;
 pub use crate::domain::detect;
 pub use crate::domain::matching;
 pub use crate::infrastructure::browser;

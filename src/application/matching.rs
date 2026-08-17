@@ -1,3 +1,6 @@
+//! Use cases: fuzzy-match provider products to canonical products
+//! (`match_products`, `link_matches`).
+
 use std::collections::{HashMap, HashSet};
 
 use crate::application::reporter::Reporter;

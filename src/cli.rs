@@ -9,13 +9,13 @@ use anyhow::Context;
 use thirtyfour::prelude::*;
 
 use price_hunter::application::reporter::Reporter;
+use price_hunter::application::{brands, matching, matrix};
 use price_hunter::browser;
 use price_hunter::capture;
 use price_hunter::config;
 use price_hunter::detect::{self, Detection, Product};
 use price_hunter::export;
 use price_hunter::instance::InstanceGuard;
-use price_hunter::services;
 use price_hunter::store::Store;
 
 /// Every entry point of the binary.
@@ -115,7 +115,7 @@ fn import_brands(path: &std::path::Path) -> anyhow::Result<()> {
 /// serves) to a CSV file and exits without opening a browser.
 fn export_matrix(path: &PathBuf) -> anyhow::Result<()> {
     let store = connect()?;
-    let matrix = services::matrix::matrix(&store)?;
+    let matrix = matrix::matrix(&store)?;
     let csv = export::matrix_to_csv(&matrix)?;
     std::fs::write(path, csv).with_context(|| format!("could not write CSV to {path:?}"))?;
     println!(
@@ -131,7 +131,7 @@ fn export_matrix(path: &PathBuf) -> anyhow::Result<()> {
 /// tables and exits without opening a browser.
 fn match_products() -> anyhow::Result<()> {
     let store = connect()?;
-    let summary = services::matching::match_products(&store, &mut StdoutReporter::new())?;
+    let summary = matching::match_products(&store, &mut StdoutReporter::new())?;
     println!(
         "Computed {} new comparisons ({} already stored)",
         summary.computed, summary.already_stored
@@ -148,7 +148,7 @@ fn match_products() -> anyhow::Result<()> {
 /// and exits without opening a browser.
 fn link_matches() -> anyhow::Result<()> {
     let store = connect()?;
-    let summary = services::matching::link_matches(&store)?;
+    let summary = matching::link_matches(&store)?;
     println!(
         "Matched {} of {} provider products",
         summary.matched, summary.provider_products
@@ -162,7 +162,7 @@ fn link_matches() -> anyhow::Result<()> {
 /// opening a browser.
 fn match_brands() -> anyhow::Result<()> {
     let store = connect()?;
-    let summary = services::brands::match_brands(&store)?;
+    let summary = brands::match_brands(&store)?;
     let matched = summary.matched_from_product + summary.matched_by_fuzzy;
     println!(
         "Brand-matched {matched} of {} provider products (product: {}, fuzzy: {}; {} updated)",

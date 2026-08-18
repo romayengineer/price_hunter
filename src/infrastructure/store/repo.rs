@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 use super::Store;
@@ -65,19 +66,89 @@ impl Store {
     /// (used to cascade-remove prices, images and match rows when a provider
     /// product is deleted).
     fn delete_related(&self, collection: &'static str, provider_product_id: &str) -> Result<()> {
+        for id in self.list_related_ids(collection, provider_product_id)? {
+            self.agent_destroy(collection, &id)?;
+        }
+        Ok(())
+    }
+
+    /// Lists the record ids in `collection` referencing `provider_product_id`,
+    /// paginating `per_page=100` at a time. Goes through the pooled agent so
+    /// a delete run stays on one TCP connection.
+    fn list_related_ids(
+        &self,
+        collection: &'static str,
+        provider_product_id: &str,
+    ) -> Result<Vec<String>> {
+        let base = format!(
+            "{}/api/collections/{}/records",
+            self.client.base_url, collection
+        );
+        let token = self
+            .client
+            .auth_token
+            .as_deref()
+            .context("not authenticated to PocketBase")?;
         let filter = format!(
             "provider_product_id='{}'",
             escape_filter(provider_product_id)
         );
-        let rows = self.list_all::<serde_json::Value>(collection, Some(&filter), None, 100)?;
-        for row in rows {
-            self.client
-                .records(collection)
-                .destroy(row["id"].as_str().unwrap_or_default())
+        let mut ids = Vec::new();
+        let mut page = 1;
+        loop {
+            let mut url = url::Url::parse(&base).context("could not parse records url")?;
+            url.query_pairs_mut()
+                .append_pair("perPage", "100")
+                .append_pair("page", &page.to_string())
+                .append_pair("filter", &filter);
+            let res = self
+                .agent
+                .get(url.as_str())
+                .set("Authorization", token)
                 .call()
-                .map_err(|e| anyhow::anyhow!("could not delete {collection} row: {e}"))?;
+                .map_err(|e| anyhow::anyhow!("could not list {collection}: {e}"))?;
+            let list: IdListResponse = res
+                .into_json()
+                .map_err(|e| anyhow::anyhow!("could not parse {collection} rows: {e}"))?;
+            let count = list.items.len();
+            ids.extend(list.items.into_iter().map(|row| row.id));
+            if count < 100 {
+                break;
+            }
+            page += 1;
         }
-        Ok(())
+        Ok(ids)
+    }
+
+    /// Deletes one record through the pooled agent (not the SDK's one-shot
+    /// HTTP calls) so the many requests of a delete run reuse a single TCP
+    /// connection instead of exhausting the OS ephemeral port range. A 404
+    /// counts as success (the row is already gone).
+    fn agent_destroy(&self, collection: &'static str, id: &str) -> Result<()> {
+        let url = format!(
+            "{}/api/collections/{}/records/{id}",
+            self.client.base_url, collection
+        );
+        let token = self
+            .client
+            .auth_token
+            .as_deref()
+            .context("not authenticated to PocketBase")?;
+        match self.agent.delete(&url).set("Authorization", token).call() {
+            Ok(_) => Ok(()),
+            Err(ureq::Error::Status(status, response)) => {
+                if status == 404 {
+                    return Ok(());
+                }
+                let detail = response.into_string().unwrap_or_default();
+                Err(anyhow::anyhow!(
+                    "could not delete {collection} row {id}: HTTP {status} body: {detail}"
+                ))
+            }
+            Err(e) => Err(anyhow::anyhow!(
+                "could not delete {collection} row {id}: {e}"
+            )),
+        }
     }
 
     /// Marks the match row for `(provider_product_id, product_id)` as
@@ -328,11 +399,7 @@ impl PriceStore for Store {
         ] {
             self.delete_related(collection, provider_product_id)?;
         }
-        self.client
-            .records(PROVIDER_PRODUCTS_COLLECTION)
-            .destroy(provider_product_id)
-            .call()
-            .map_err(|e| anyhow::anyhow!("could not delete provider product: {e}"))?;
+        self.agent_destroy(PROVIDER_PRODUCTS_COLLECTION, provider_product_id)?;
         Ok(())
     }
 
@@ -349,6 +416,17 @@ impl PriceStore for Store {
         }
         Ok(prices)
     }
+}
+
+/// Page shape of a generic list response used to collect related row ids.
+#[derive(Deserialize)]
+struct IdListResponse {
+    items: Vec<IdItem>,
+}
+
+#[derive(Deserialize)]
+struct IdItem {
+    id: String,
 }
 
 /// Fetches all stored match rows for one provider product using the unique

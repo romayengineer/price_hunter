@@ -79,14 +79,22 @@ pub fn parse(args: &[String]) -> Command {
     Command::Browse(rest.iter().find(|a| !a.starts_with('-')).cloned())
 }
 
+/// Whether the command line carries a global auto-accept flag (`-yes`/`-y`).
+/// It never selects a command by itself — it only skips interactive prompts in
+/// commands that ask for confirmation.
+pub fn wants_yes(args: &[String]) -> bool {
+    args.iter().skip(1).any(|a| a == "-yes" || a == "-y")
+}
+
 /// The value following `flag` in `rest`, if present.
 fn arg_after(rest: &[String], flag: &str) -> Option<PathBuf> {
     let i = rest.iter().position(|a| a == flag)?;
     rest.get(i + 1).cloned().map(PathBuf::from)
 }
 
-/// Dispatches `command` and reports its result on stdout.
-pub async fn run(command: Command) -> anyhow::Result<()> {
+/// Dispatches `command` and reports its result on stdout. `yes` auto-accepts
+/// any confirmation prompt the command would otherwise ask interactively.
+pub async fn run(command: Command, yes: bool) -> anyhow::Result<()> {
     match command {
         Command::ImportProducts(path) => import_products(&path),
         Command::ImportBrands(path) => import_brands(&path),
@@ -95,10 +103,26 @@ pub async fn run(command: Command) -> anyhow::Result<()> {
         Command::LinkMatches => link_matches(),
         Command::MatchBrands => match_brands(),
         Command::ReportMissingBrands => report_missing_brands(),
-        Command::DeleteUnbranded => delete_unbranded(),
+        Command::DeleteUnbranded => delete_unbranded(yes),
         Command::MatrixServer => matrix_server().await,
         Command::Browse(url) => browse(url).await,
     }
+}
+
+/// Returns `true` when `yes` was set or the user answered `y`/`yes` to
+/// `prompt`. With `yes` set no input is read, so a non-interactive run never
+/// hangs waiting on stdin.
+fn confirm(prompt: &str, yes: bool) -> anyhow::Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+    use std::io::Write;
+    print!("{prompt} ");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    let answer = answer.trim();
+    Ok(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes"))
 }
 
 /// Connects to PocketBase, writing the config template first if needed.
@@ -212,9 +236,9 @@ fn report_missing_brands() -> anyhow::Result<()> {
 
 /// Lists provider products whose name contains no known brand and deletes
 /// them in pages of 50, asking for confirmation before each page (`y` deletes
-/// the page and continues; anything else aborts). Exits without opening a
-/// browser.
-fn delete_unbranded() -> anyhow::Result<()> {
+/// the page and continues; anything else aborts). With `yes` set the rows are
+/// deleted without any prompt. Exits without opening a browser.
+fn delete_unbranded(yes: bool) -> anyhow::Result<()> {
     let store = connect()?;
     let rows = brands::unbranded_products(&store)?;
     println!(
@@ -225,23 +249,21 @@ fn delete_unbranded() -> anyhow::Result<()> {
         println!("Nothing to delete");
         return Ok(());
     }
-    use std::io::Write;
-    let stdin = std::io::stdin();
+    let pages = rows.len().div_ceil(50);
     let mut deleted = 0usize;
-    for page in rows.chunks(50) {
+    for (page_index, page) in rows.chunks(50).enumerate() {
         println!();
-        println!("Next page ({} rows):", page.len());
-        for (i, row) in page.iter().enumerate() {
-            println!("{}. {}\t{}", i + 1, row.id, row.name);
-        }
-        print!("Delete these {} rows? [y/N] ", page.len());
-        let _ = std::io::stdout().flush();
-        let mut answer = String::new();
-        stdin.read_line(&mut answer)?;
-        if !answer.trim().eq_ignore_ascii_case("y") && !answer.trim().eq_ignore_ascii_case("yes")
-        {
-            println!("Aborted ({} of {} deleted)", deleted, rows.len());
-            return Ok(());
+        if yes {
+            println!("Deleting page {}/{} ({} rows)", page_index + 1, pages, page.len());
+        } else {
+            println!("Next page ({} rows):", page.len());
+            for (i, row) in page.iter().enumerate() {
+                println!("{}. {}\t{}", i + 1, row.id, row.name);
+            }
+            if !confirm(&format!("Delete these {} rows? [y/N]", page.len()), false)? {
+                println!("Aborted ({} of {} deleted)", deleted, rows.len());
+                return Ok(());
+            }
         }
         for row in page {
             store.delete_provider_product(&row.id)?;
@@ -464,13 +486,38 @@ mod tests {
         assert_eq!(parse(&args(&["-matrix-server"])), Command::MatrixServer);
     }
 
-    #[test]
-    fn flags_win_over_a_bare_url() {
-        assert_eq!(
-            parse(&args(&["-matrix-server", "https://example.com"])),
-            Command::MatrixServer
-        );
-    }
+#[test]
+fn flags_win_over_a_bare_url() {
+    assert_eq!(
+        parse(&args(&["-matrix-server", "https://example.com"])),
+        Command::MatrixServer
+    );
+}
+
+#[test]
+fn yes_flag_does_not_select_a_command() {
+    assert_eq!(
+        parse(&args(&["-delete-unbranded", "-yes"])),
+        Command::DeleteUnbranded
+    );
+    assert_eq!(
+        parse(&args(&["-y", "-delete-unbranded"])),
+        Command::DeleteUnbranded
+    );
+}
+
+#[test]
+fn wants_yes_recognizes_yes_and_y() {
+    assert!(wants_yes(&args(&["-delete-unbranded", "-yes"])));
+    assert!(wants_yes(&args(&["-delete-unbranded", "-y"])));
+    assert!(!wants_yes(&args(&["-delete-unbranded"])));
+    assert!(!wants_yes(&args(&[])));
+}
+
+#[test]
+fn confirm_with_yes_returns_true_without_reading_stdin() {
+    assert!(confirm("Delete these rows? [y/N]", true).unwrap());
+}
 
     #[test]
     fn flag_precedence_follows_the_fixed_order() {

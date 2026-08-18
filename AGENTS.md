@@ -124,6 +124,11 @@ password = "change-me"          # required; first run writes a commented templat
 ## Run
 - `bash pocketbase/scripts/run_pocketbase.sh` starts the PocketBase server
   (data dir outside the repo, repo-relative migrations dir).
+- Any command can be made non-interactive by adding `-yes` (or `-y`): it
+  auto-accepts confirmation prompts instead of reading stdin. Currently only
+  `-delete-unbranded` prompts, so e.g. `cargo run -- -delete-unbranded -yes`
+  deletes every page without asking. The flag is a modifier — it never selects
+  a command by itself.
 - `cargo run` opens Chrome and keeps it open until the window is closed or Ctrl+C.
   It connects to PocketBase **first** and exits with an error if it can't. Run
   `bash pocketbase/scripts/setup_pocketbase.sh` once (writes
@@ -192,7 +197,9 @@ password = "change-me"          # required; first run writes a commented templat
   before each page (`y`/`yes` deletes the page and continues; anything else
   aborts). Deleting a row also removes its `provider_product_prices`,
   `provider_product_images` and `provider_product_matches` rows (PocketBase has
-  no cascade deletes). Use it to clean up stale rows scraped before the
+  no cascade deletes). The lookups and deletes ride the pooled `ureq` agent (one
+  TCP connection) — the SDK's one-shot client would exhaust macOS ephemeral
+  ports over a page of 50 products. Use it to clean up stale rows scraped before the
   extractor included brand names. Note: sites whose cards render no brand (e.g.
   todoslosperfumes) will have every row flagged — the per-page prompt is the
   safety net.

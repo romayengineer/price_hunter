@@ -186,6 +186,16 @@ password = "change-me"          # required; first run writes a commented templat
   the provider site renders the brand in the card, so the scraped name should
   carry it. Prints `<provider_domain>\t<name>\t<brand>\t<product_id>\t<provider_product_id>`
   per affected row and exits.
+- `cargo run -- -delete-unbranded` lists every provider product whose name
+  contains no known brand (brand table + `products.brand`, all brand tokens
+  must be present) and deletes them in pages of 50, asking for confirmation
+  before each page (`y`/`yes` deletes the page and continues; anything else
+  aborts). Deleting a row also removes its `provider_product_prices`,
+  `provider_product_images` and `provider_product_matches` rows (PocketBase has
+  no cascade deletes). Use it to clean up stale rows scraped before the
+  extractor included brand names. Note: sites whose cards render no brand (e.g.
+  todoslosperfumes) will have every row flagged — the per-page prompt is the
+  safety net.
 - `cargo run -- -matrix-server` serves the product × provider price matrix for
   the local Flutter UI. Binds to `127.0.0.1:8091` (override
   `PRICE_HUNTER_MATRIX_PORT`) and rebuilds the matrix from PocketBase on every

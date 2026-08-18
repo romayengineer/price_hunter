@@ -3,8 +3,9 @@
 
 #![allow(clippy::cognitive_complexity)]
 
-use price_hunter::application::brands::{match_brands, missing_brands};
+use price_hunter::application::brands::{match_brands, missing_brands, unbranded_products};
 use price_hunter::domain::model::{BrandRow, ProductRow, ProviderProductRow, ProviderRow};
+use price_hunter::domain::ports::PriceStore;
 
 use super::fakes::FakeStore;
 
@@ -114,4 +115,52 @@ fn missing_brands_flags_matched_products_whose_name_lacks_the_brand() {
     assert_eq!(row.name, "Gold Fresh Couture EDP 100 Ml");
     assert_eq!(row.product_id, "p1");
     assert_eq!(row.brand, "moschino");
+}
+
+#[test]
+fn unbranded_products_flags_names_without_any_known_brand() {
+    let mut fake = FakeStore::default();
+    fake.brands.push(BrandRow {
+        id: "b1".to_string(),
+        name: "moschino".to_string(),
+    });
+    fake.products.push(ProductRow {
+        id: "p1".to_string(),
+        name: "Adidas Vibes Smooth Pace EDP Unisex 100 Ml".to_string(),
+        brand: "adidas".to_string(),
+    });
+    // pp1 carries a brand token (from the brand table) -> not flagged.
+    fake.provider_products.push(ProviderProductRow {
+        id: "pp1".to_string(),
+        provider_id: "prov1".to_string(),
+        name: "Moschino Gold Fresh Couture EDP 100 Ml".to_string(),
+        ..Default::default()
+    });
+    // pp2 carries a brand token (from products.brand) -> not flagged.
+    fake.provider_products.push(ProviderProductRow {
+        id: "pp2".to_string(),
+        provider_id: "prov1".to_string(),
+        name: "Adidas Vibes Smooth Pace EDP Unisex 100 Ml".to_string(),
+        ..Default::default()
+    });
+    // pp3 carries no known brand -> flagged for deletion.
+    fake.provider_products.push(ProviderProductRow {
+        id: "pp3".to_string(),
+        provider_id: "prov1".to_string(),
+        name: "Gold Fresh Couture EDP 100 Ml".to_string(),
+        ..Default::default()
+    });
+
+    let flagged = unbranded_products(&fake).expect("report should succeed");
+
+    let ids: Vec<&str> = flagged.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(ids, vec!["pp3"]);
+}
+
+#[test]
+fn delete_provider_product_records_the_deletion() {
+    let fake = FakeStore::default();
+    fake.delete_provider_product("pp9")
+        .expect("deletion should succeed");
+    assert_eq!(fake.deleted_provider_products(), vec!["pp9".to_string()]);
 }

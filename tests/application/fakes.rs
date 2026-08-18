@@ -25,6 +25,7 @@ pub struct FakeStore {
     matches: RefCell<Vec<ProviderMatchRow>>,
     product_links: RefCell<HashMap<String, Option<String>>>,
     brand_links: RefCell<HashMap<String, Option<String>>>,
+    deleted_provider_products: RefCell<Vec<String>>,
 }
 
 impl FakeStore {
@@ -77,6 +78,11 @@ impl FakeStore {
     /// The recorded `provider_product_id -> brand_id` assignments.
     pub fn brand_links(&self) -> HashMap<String, Option<String>> {
         self.brand_links.borrow().clone()
+    }
+
+    /// The provider products deleted via `delete_provider_product`.
+    pub fn deleted_provider_products(&self) -> Vec<String> {
+        self.deleted_provider_products.borrow().clone()
     }
 }
 
@@ -218,6 +224,14 @@ impl PriceStore for FakeStore {
         self.brand_links
             .borrow_mut()
             .insert(provider_product_id.to_string(), brand_id.map(str::to_owned));
+        Ok(())
+    }
+
+    fn delete_provider_product(&self, provider_product_id: &str) -> Result<(), PriceStoreError> {
+        self.check()?;
+        self.deleted_provider_products
+            .borrow_mut()
+            .push(provider_product_id.to_string());
         Ok(())
     }
 

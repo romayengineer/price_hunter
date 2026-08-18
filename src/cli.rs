@@ -14,6 +14,7 @@ use price_hunter::browser;
 use price_hunter::capture;
 use price_hunter::config;
 use price_hunter::detect::{self, Detection, Product};
+use price_hunter::domain::ports::PriceStore;
 use price_hunter::export;
 use price_hunter::instance::InstanceGuard;
 use price_hunter::store::Store;
@@ -35,6 +36,8 @@ pub enum Command {
     MatchBrands,
     /// `-report-missing-brands`
     ReportMissingBrands,
+    /// `-delete-unbranded`
+    DeleteUnbranded,
     /// `-matrix-server`
     MatrixServer,
     /// Default: open a browser, optionally at a URL, and poll for captures.
@@ -43,6 +46,7 @@ pub enum Command {
 
 /// Parses the command line. Flag precedence matches the historical fixed
 /// order; a bare URL (first non-`-` argument) selects [`Command::Browse`].
+#[allow(clippy::cognitive_complexity)]
 pub fn parse(args: &[String]) -> Command {
     let rest = &args[1..];
     if let Some(path) = arg_after(rest, "-import-products") {
@@ -66,6 +70,9 @@ pub fn parse(args: &[String]) -> Command {
     if rest.iter().any(|a| a == "-report-missing-brands") {
         return Command::ReportMissingBrands;
     }
+    if rest.iter().any(|a| a == "-delete-unbranded") {
+        return Command::DeleteUnbranded;
+    }
     if rest.iter().any(|a| a == "-matrix-server") {
         return Command::MatrixServer;
     }
@@ -88,6 +95,7 @@ pub async fn run(command: Command) -> anyhow::Result<()> {
         Command::LinkMatches => link_matches(),
         Command::MatchBrands => match_brands(),
         Command::ReportMissingBrands => report_missing_brands(),
+        Command::DeleteUnbranded => delete_unbranded(),
         Command::MatrixServer => matrix_server().await,
         Command::Browse(url) => browse(url).await,
     }
@@ -199,6 +207,49 @@ fn report_missing_brands() -> anyhow::Result<()> {
         );
     }
     println!("Done: {} rows affected", report.affected.len());
+    Ok(())
+}
+
+/// Lists provider products whose name contains no known brand and deletes
+/// them in pages of 50, asking for confirmation before each page (`y` deletes
+/// the page and continues; anything else aborts). Exits without opening a
+/// browser.
+fn delete_unbranded() -> anyhow::Result<()> {
+    let store = connect()?;
+    let rows = brands::unbranded_products(&store)?;
+    println!(
+        "{} provider products have no brand in their name",
+        rows.len()
+    );
+    if rows.is_empty() {
+        println!("Nothing to delete");
+        return Ok(());
+    }
+    use std::io::Write;
+    let stdin = std::io::stdin();
+    let mut deleted = 0usize;
+    for page in rows.chunks(50) {
+        println!();
+        println!("Next page ({} rows):", page.len());
+        for (i, row) in page.iter().enumerate() {
+            println!("{}. {}\t{}", i + 1, row.id, row.name);
+        }
+        print!("Delete these {} rows? [y/N] ", page.len());
+        let _ = std::io::stdout().flush();
+        let mut answer = String::new();
+        stdin.read_line(&mut answer)?;
+        if !answer.trim().eq_ignore_ascii_case("y") && !answer.trim().eq_ignore_ascii_case("yes")
+        {
+            println!("Aborted ({} of {} deleted)", deleted, rows.len());
+            return Ok(());
+        }
+        for row in page {
+            store.delete_provider_product(&row.id)?;
+        }
+        deleted += page.len();
+        println!("Deleted {} rows (total {deleted})", page.len());
+    }
+    println!("Done: deleted {deleted} provider products");
     Ok(())
 }
 
@@ -405,6 +456,10 @@ mod tests {
         assert_eq!(
             parse(&args(&["-report-missing-brands"])),
             Command::ReportMissingBrands
+        );
+        assert_eq!(
+            parse(&args(&["-delete-unbranded"])),
+            Command::DeleteUnbranded
         );
         assert_eq!(parse(&args(&["-matrix-server"])), Command::MatrixServer);
     }

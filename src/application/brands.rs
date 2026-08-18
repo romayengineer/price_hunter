@@ -195,3 +195,41 @@ pub fn missing_brands(store: &impl PriceStore) -> Result<MissingBrandReport, Pri
     }
     Ok(MissingBrandReport { matched, affected })
 }
+
+/// Returns every provider product whose name contains no known brand. A brand
+/// is "in" the name when all its tokens appear (case-insensitive,
+/// `brand_coverage == 1.0`); known brands are the `brand` table entries plus
+/// the `brand` values of the canonical products. Rows returned here are
+/// candidates for `-delete-unbranded`: after a re-scrape with brand-enriched
+/// extraction, names without any brand are stale.
+pub fn unbranded_products(store: &impl PriceStore) -> Result<Vec<ProviderProductRow>, PriceStoreError> {
+    let provider_products = store.list_provider_products()?;
+    let products = store.list_all_products()?;
+    let brands = store.list_brands()?;
+    let mut known_brands: Vec<String> = brands
+        .iter()
+        .map(|b| b.name.trim())
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect();
+    known_brands.extend(
+        products
+            .iter()
+            .map(|p| p.brand.trim())
+            .filter(|brand| !brand.is_empty())
+            .map(str::to_owned),
+    );
+    known_brands.sort();
+    known_brands.dedup();
+    if known_brands.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(provider_products
+        .into_iter()
+        .filter(|pp| {
+            known_brands
+                .iter()
+                .all(|brand| brand_coverage(&pp.name, brand) < 1.0)
+        })
+        .collect())
+}

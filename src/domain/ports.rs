@@ -65,6 +65,10 @@ pub trait PriceStore {
         brand_id: Option<&str>,
     ) -> Result<(), PriceStoreError>;
 
+    /// Deletes a provider product and its related rows (prices, images and
+    /// match candidates) so nothing orphaned is left behind.
+    fn delete_provider_product(&self, provider_product_id: &str) -> Result<(), PriceStoreError>;
+
     /// Resolves the latest price per provider product (first row seen when
     /// listing prices newest-first).
     fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>, PriceStoreError>;

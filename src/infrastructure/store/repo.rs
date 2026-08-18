@@ -7,9 +7,9 @@ use super::Store;
 use super::http::escape_filter;
 use super::types::{
     BRANDS_COLLECTION, BrandLinkPayload, MatchListResponse, PRODUCTS_COLLECTION,
-    PROVIDER_PRODUCT_MATCHES_COLLECTION, PROVIDER_PRODUCT_PRICES_COLLECTION,
-    PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION, ProductLinkPayload, ProviderMatchPayload,
-    ProviderPriceRow,
+    PROVIDER_PRODUCT_IMAGES_COLLECTION, PROVIDER_PRODUCT_MATCHES_COLLECTION,
+    PROVIDER_PRODUCT_PRICES_COLLECTION, PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION,
+    ProductLinkPayload, ProviderMatchPayload, ProviderPriceRow,
 };
 use crate::domain::error::PriceStoreError;
 use crate::domain::matching::{MIN_SCORE, MatchCandidate};
@@ -59,6 +59,25 @@ impl Store {
             page += 1;
         }
         Ok(items)
+    }
+
+    /// Deletes every row in `collection` that references `provider_product_id`
+    /// (used to cascade-remove prices, images and match rows when a provider
+    /// product is deleted).
+    fn delete_related(&self, collection: &'static str, provider_product_id: &str) -> Result<()> {
+        let filter = format!(
+            "provider_product_id='{}'",
+            escape_filter(provider_product_id)
+        );
+        let rows = self.list_all::<serde_json::Value>(collection, Some(&filter), None, 100)?;
+        for row in rows {
+            self.client
+                .records(collection)
+                .destroy(row["id"].as_str().unwrap_or_default())
+                .call()
+                .map_err(|e| anyhow::anyhow!("could not delete {collection} row: {e}"))?;
+        }
+        Ok(())
     }
 
     /// Marks the match row for `(provider_product_id, product_id)` as
@@ -296,6 +315,24 @@ impl PriceStore for Store {
             )
             .call()
             .map_err(|e| anyhow::anyhow!("could not update brand link: {e}"))?;
+        Ok(())
+    }
+
+    /// Deletes a provider product after removing its match candidates,
+    /// images and price history (PocketBase has no cascade deletes).
+    fn delete_provider_product(&self, provider_product_id: &str) -> Result<(), PriceStoreError> {
+        for collection in [
+            PROVIDER_PRODUCT_MATCHES_COLLECTION,
+            PROVIDER_PRODUCT_IMAGES_COLLECTION,
+            PROVIDER_PRODUCT_PRICES_COLLECTION,
+        ] {
+            self.delete_related(collection, provider_product_id)?;
+        }
+        self.client
+            .records(PROVIDER_PRODUCTS_COLLECTION)
+            .destroy(provider_product_id)
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not delete provider product: {e}"))?;
         Ok(())
     }
 

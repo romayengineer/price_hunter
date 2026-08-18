@@ -20,6 +20,7 @@ fn match_brands_assigns_product_brand_and_fuzzy_matches() {
         id: "p1".to_string(),
         name: "Diesel Fuel For Life EDT 125 ml".to_string(),
         brand: "diesel".to_string(),
+        ..Default::default()
     });
     // pp1 is already linked to a canonical product -> takes its brand.
     fake.provider_products.push(ProviderProductRow {
@@ -74,11 +75,13 @@ fn missing_brands_flags_matched_products_whose_name_lacks_the_brand() {
         id: "p1".to_string(),
         name: "Moschino Gold Fresh Couture EDP 100 Ml".to_string(),
         brand: "moschino".to_string(),
+        ..Default::default()
     });
     fake.products.push(ProductRow {
         id: "p2".to_string(),
         name: "Adidas Vibes Smooth Pace EDP Unisex 100 Ml".to_string(),
         brand: "adidas".to_string(),
+        ..Default::default()
     });
     // pp1: matched but the name misses the brand -> flagged.
     fake.provider_products.push(ProviderProductRow {
@@ -128,6 +131,7 @@ fn unbranded_products_flags_names_without_any_known_brand() {
         id: "p1".to_string(),
         name: "Adidas Vibes Smooth Pace EDP Unisex 100 Ml".to_string(),
         brand: "adidas".to_string(),
+        ..Default::default()
     });
     // pp1 carries a brand token (from the brand table) -> not flagged.
     fake.provider_products.push(ProviderProductRow {

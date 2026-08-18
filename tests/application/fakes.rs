@@ -8,7 +8,8 @@ use std::collections::{HashMap, HashSet};
 use price_hunter::domain::error::PriceStoreError;
 use price_hunter::domain::matching::{MIN_SCORE, MatchCandidate};
 use price_hunter::domain::model::{
-    BrandRow, MatchInsert, ProductRow, ProviderMatchRow, ProviderProductRow, ProviderRow,
+    BrandRow, MatchInsert, ProductInsert, ProductRow, ProviderMatchRow, ProviderProductRow,
+    ProviderRow,
 };
 use price_hunter::domain::ports::PriceStore;
 
@@ -26,6 +27,7 @@ pub struct FakeStore {
     product_links: RefCell<HashMap<String, Option<String>>>,
     brand_links: RefCell<HashMap<String, Option<String>>>,
     deleted_provider_products: RefCell<Vec<String>>,
+    created_products: RefCell<Vec<(String, String, String, String)>>,
 }
 
 impl FakeStore {
@@ -84,6 +86,12 @@ impl FakeStore {
     pub fn deleted_provider_products(&self) -> Vec<String> {
         self.deleted_provider_products.borrow().clone()
     }
+
+    /// The canonical products created via `create_product`, as
+    /// `(brand, product_name, size, name)` tuples.
+    pub fn created_products(&self) -> Vec<(String, String, String, String)> {
+        self.created_products.borrow().clone()
+    }
 }
 
 impl PriceStore for FakeStore {
@@ -96,6 +104,8 @@ impl PriceStore for FakeStore {
                 id: p.id.clone(),
                 name: p.name.clone(),
                 brand: p.brand.clone(),
+                product_name: p.product_name.clone(),
+                size: p.size.clone(),
             })
             .collect())
     }
@@ -233,6 +243,35 @@ impl PriceStore for FakeStore {
             .borrow_mut()
             .push(provider_product_id.to_string());
         Ok(())
+    }
+
+    fn create_product(
+        &self,
+        brand: &str,
+        product_name: &str,
+        name: &str,
+        size: &str,
+    ) -> Result<ProductInsert, PriceStoreError> {
+        self.check()?;
+        let exists = self
+            .products
+            .iter()
+            .any(|p| p.name.eq_ignore_ascii_case(name))
+            || self
+                .created_products
+                .borrow()
+                .iter()
+                .any(|(_, _, _, n)| n.eq_ignore_ascii_case(name));
+        if exists {
+            return Ok(ProductInsert::AlreadyExists);
+        }
+        self.created_products.borrow_mut().push((
+            brand.to_string(),
+            product_name.to_string(),
+            size.to_string(),
+            name.to_string(),
+        ));
+        Ok(ProductInsert::Created)
     }
 
     fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>, PriceStoreError> {

@@ -1,8 +1,9 @@
-//! Serializes the price matrix as CSV for spreadsheet consumption.
+//! Serializes the price matrix and the canonical products as CSV for
+//! spreadsheet consumption.
 
 use anyhow::Result;
 
-use crate::domain::model::Matrix;
+use crate::domain::model::{Matrix, ProductRow};
 
 /// Serializes the matrix as CSV with the same table structure as
 /// `GET /matrix`: one column per provider (header = domain), one row per
@@ -34,6 +35,37 @@ pub fn matrix_to_csv(matrix: &Matrix) -> Result<String> {
     Ok(csv)
 }
 
+/// Serializes the canonical products as CSV with `brand,product_name,size`
+/// columns, one row per product sorted by display name. A UTF-8 BOM is
+/// prepended so Excel detects the encoding.
+pub fn products_to_csv(products: &[ProductRow]) -> Result<String> {
+    let mut order: Vec<usize> = (0..products.len()).collect();
+    order.sort_by(|&a, &b| {
+        products[a]
+            .name
+            .to_lowercase()
+            .cmp(&products[b].name.to_lowercase())
+    });
+    let mut writer = csv::Writer::from_writer(Vec::new());
+    writer.write_record(["brand", "product_name", "size"])?;
+    for i in order {
+        let product = &products[i];
+        writer.write_record([
+            product.brand.as_str(),
+            product.product_name.as_str(),
+            product.size.as_str(),
+        ])?;
+    }
+    writer.flush()?;
+    let bytes = writer
+        .into_inner()
+        .map_err(|e| anyhow::anyhow!("could not finalize CSV export: {e}"))?;
+    let mut csv = String::from_utf8(bytes)
+        .map_err(|e| anyhow::anyhow!("CSV export is not valid UTF-8: {e}"))?;
+    csv.insert(0, '\u{feff}');
+    Ok(csv)
+}
+
 #[cfg(test)]
 #[allow(clippy::cognitive_complexity)]
 mod tests {
@@ -41,6 +73,35 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::domain::model::{MatrixProvider, MatrixRow};
+
+    #[test]
+    fn products_to_csv_writes_brand_product_name_and_size_sorted() {
+        let products = vec![
+            ProductRow {
+                id: "p2".to_string(),
+                name: "Zeta EDP 100 ml".to_string(),
+                brand: "zeta".to_string(),
+                product_name: "EDP 100".to_string(),
+                size: "100 ml".to_string(),
+            },
+            ProductRow {
+                id: "p1".to_string(),
+                name: "Alfa EDP 50 ml".to_string(),
+                brand: "alfa".to_string(),
+                product_name: "EDP 50".to_string(),
+                size: "50 ml".to_string(),
+            },
+        ];
+        let csv = products_to_csv(&products).unwrap();
+        assert!(csv.starts_with('\u{feff}'));
+        let body = csv.trim_start_matches('\u{feff}');
+        assert_eq!(
+            body,
+            "brand,product_name,size\n\
+             alfa,EDP 50,50 ml\n\
+             zeta,EDP 100,100 ml\n"
+        );
+    }
 
     #[test]
     fn to_csv_writes_table_matching_matrix_structure() {

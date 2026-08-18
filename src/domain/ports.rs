@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use crate::domain::error::PriceStoreError;
 use crate::domain::matching::MatchCandidate;
 use crate::domain::model::{
-    BrandRow, MatchInsert, ProductRow, ProviderMatchRow, ProviderProductRow, ProviderRow,
+    BrandRow, MatchInsert, ProductInsert, ProductRow, ProviderMatchRow, ProviderProductRow,
+    ProviderRow,
 };
 
 /// The data-access surface the application layer orchestrates against.
@@ -68,6 +69,16 @@ pub trait PriceStore {
     /// Deletes a provider product and its related rows (prices, images and
     /// match candidates) so nothing orphaned is left behind.
     fn delete_provider_product(&self, provider_product_id: &str) -> Result<(), PriceStoreError>;
+
+    /// Inserts one canonical product, reporting `AlreadyExists` when a product
+    /// with the same `(brand, product_name, size)` is already present.
+    fn create_product(
+        &self,
+        brand: &str,
+        product_name: &str,
+        name: &str,
+        size: &str,
+    ) -> Result<ProductInsert, PriceStoreError>;
 
     /// Resolves the latest price per provider product (first row seen when
     /// listing prices newest-first).

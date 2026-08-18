@@ -9,11 +9,12 @@ use anyhow::Context;
 use thirtyfour::prelude::*;
 
 use price_hunter::application::reporter::Reporter;
-use price_hunter::application::{brands, matching, matrix};
+use price_hunter::application::{brands, imports, matching, matrix};
 use price_hunter::browser;
 use price_hunter::capture;
 use price_hunter::config;
 use price_hunter::detect::{self, Detection, Product};
+use price_hunter::domain::model::ProductInsert;
 use price_hunter::domain::ports::PriceStore;
 use price_hunter::export;
 use price_hunter::instance::InstanceGuard;
@@ -28,6 +29,8 @@ pub enum Command {
     ImportBrands(PathBuf),
     /// `-export-matrix <csv>`
     ExportMatrix(PathBuf),
+    /// `-export-products <csv>`
+    ExportProducts(PathBuf),
     /// `-match-products`
     MatchProducts,
     /// `-link-matches`
@@ -38,6 +41,8 @@ pub enum Command {
     ReportMissingBrands,
     /// `-delete-unbranded`
     DeleteUnbranded,
+    /// `-import-unmatched`
+    ImportUnmatched,
     /// `-matrix-server`
     MatrixServer,
     /// Default: open a browser, optionally at a URL, and poll for captures.
@@ -58,6 +63,9 @@ pub fn parse(args: &[String]) -> Command {
     if let Some(path) = arg_after(rest, "-export-matrix") {
         return Command::ExportMatrix(path);
     }
+    if let Some(path) = arg_after(rest, "-export-products") {
+        return Command::ExportProducts(path);
+    }
     if rest.iter().any(|a| a == "-match-products") {
         return Command::MatchProducts;
     }
@@ -72,6 +80,9 @@ pub fn parse(args: &[String]) -> Command {
     }
     if rest.iter().any(|a| a == "-delete-unbranded") {
         return Command::DeleteUnbranded;
+    }
+    if rest.iter().any(|a| a == "-import-unmatched") {
+        return Command::ImportUnmatched;
     }
     if rest.iter().any(|a| a == "-matrix-server") {
         return Command::MatrixServer;
@@ -99,11 +110,13 @@ pub async fn run(command: Command, yes: bool) -> anyhow::Result<()> {
         Command::ImportProducts(path) => import_products(&path),
         Command::ImportBrands(path) => import_brands(&path),
         Command::ExportMatrix(path) => export_matrix(&path),
+        Command::ExportProducts(path) => export_products(&path),
         Command::MatchProducts => match_products(),
         Command::LinkMatches => link_matches(),
         Command::MatchBrands => match_brands(),
         Command::ReportMissingBrands => report_missing_brands(),
         Command::DeleteUnbranded => delete_unbranded(yes),
+        Command::ImportUnmatched => import_unmatched(yes),
         Command::MatrixServer => matrix_server().await,
         Command::Browse(url) => browse(url).await,
     }
@@ -123,6 +136,56 @@ fn confirm(prompt: &str, yes: bool) -> anyhow::Result<bool> {
     std::io::stdin().read_line(&mut answer)?;
     let answer = answer.trim();
     Ok(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes"))
+}
+
+/// Returns `Ok(true)` for a single `y` key press (no Enter needed), `Ok(false)`
+/// for anything else. With `yes` set no key is read. Falls back to a full line
+/// when stdin is not a terminal.
+fn confirm_key(prompt: &str, yes: bool) -> anyhow::Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+    use std::io::Write;
+    print!("{prompt} ");
+    std::io::stdout().flush()?;
+    let key = read_single_key()?;
+    println!();
+    Ok(key == b'y' || key == b'Y')
+}
+
+/// Reads one byte from stdin with the terminal in raw mode (no echo, no Enter
+/// required) and restores it afterwards. When stdin is not a TTY (piped input,
+/// tests), falls back to a line read and takes its first byte.
+fn read_single_key() -> anyhow::Result<u8> {
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+
+    let mut stdin = std::io::stdin();
+    let fd = stdin.as_raw_fd();
+    let raw = termios::Termios::from_fd(fd)
+        .and_then(|mut t| {
+            t.c_lflag &= !(termios::ICANON | termios::ECHO);
+            t.c_cc[termios::VMIN] = 1;
+            t.c_cc[termios::VTIME] = 0;
+            termios::tcsetattr(fd, termios::TCSANOW, &t)?;
+            Ok(t)
+        });
+    let mut buf = [0u8; 1];
+    let result: std::io::Result<u8> = match raw {
+        Ok(original) => {
+            let n = stdin.read(&mut buf);
+            let _ = termios::tcsetattr(fd, termios::TCSANOW, &original);
+            n.map(|count| if count == 0 { b'\n' } else { buf[0] })
+        }
+        Err(_) => {
+            let mut line = String::new();
+            match stdin.read_line(&mut line) {
+                Ok(_) => Ok(line.as_bytes().first().copied().unwrap_or(b'\n')),
+                Err(e) => Err(e),
+            }
+        }
+    };
+    result.map_err(Into::into)
 }
 
 /// Connects to PocketBase, writing the config template first if needed.
@@ -162,6 +225,17 @@ fn export_matrix(path: &PathBuf) -> anyhow::Result<()> {
         matrix.providers.len(),
         path.display()
     );
+    Ok(())
+}
+
+/// Writes the canonical products (`brand,product_name,size` columns) to a CSV
+/// file and exits without opening a browser.
+fn export_products(path: &PathBuf) -> anyhow::Result<()> {
+    let store = connect()?;
+    let products = store.list_all_products()?;
+    let csv = export::products_to_csv(&products)?;
+    std::fs::write(path, csv).with_context(|| format!("could not write CSV to {path:?}"))?;
+    println!("Exported {} products to {}", products.len(), path.display());
     Ok(())
 }
 
@@ -272,6 +346,68 @@ fn delete_unbranded(yes: bool) -> anyhow::Result<()> {
         println!("Deleted {} rows (total {deleted})", page.len());
     }
     println!("Done: deleted {deleted} provider products");
+    Ok(())
+}
+
+/// Proposes canonical products from unmatched provider products (no
+/// `product_id`) and inserts each one after an interactive single-key `(y/N)`
+/// confirmation. `y` inserts, anything else skips. With `yes` set every
+/// proposal is inserted without prompting. Exits without opening a browser.
+#[allow(clippy::cognitive_complexity)]
+fn import_unmatched(yes: bool) -> anyhow::Result<()> {
+    let store = connect()?;
+    let proposals = imports::propose_unmatched(&store)?;
+    println!(
+        "{} unmatched provider products become canonical product proposals",
+        proposals.len()
+    );
+    if proposals.is_empty() {
+        println!("Nothing to propose");
+        return Ok(());
+    }
+    let total = proposals.len();
+    let mut inserted = 0usize;
+    let mut skipped = 0usize;
+    for (i, proposal) in proposals.iter().enumerate() {
+        println!();
+        let brand = if proposal.brand.is_empty() {
+            "?"
+        } else {
+            &proposal.brand
+        };
+        let size = if proposal.size.is_empty() {
+            "-"
+        } else {
+            &proposal.size
+        };
+        println!(
+            "{}/{}  {} | {} | {}",
+            i + 1, total, brand, proposal.product_name, size
+        );
+        println!("      from: {}", proposal.source_name);
+        if !confirm_key("Insert as canonical product? (y/N)", yes)? {
+            skipped += 1;
+            println!("      skipped");
+            continue;
+        }
+        match store.create_product(
+            &proposal.brand,
+            &proposal.product_name,
+            &proposal.name,
+            &proposal.size,
+        )? {
+            ProductInsert::Created => {
+                inserted += 1;
+                println!("      inserted: {}", proposal.name);
+            }
+            ProductInsert::AlreadyExists => {
+                skipped += 1;
+                println!("      already exists");
+            }
+        }
+    }
+    println!();
+    println!("Done: inserted {inserted}, skipped {skipped} of {total}");
     Ok(())
 }
 
@@ -467,6 +603,10 @@ mod tests {
             parse(&args(&["-export-matrix", "matrix.csv"])),
             Command::ExportMatrix(PathBuf::from("matrix.csv"))
         );
+        assert_eq!(
+            parse(&args(&["-export-products", "products.csv"])),
+            Command::ExportProducts(PathBuf::from("products.csv"))
+        );
     }
 
     #[test]
@@ -482,6 +622,10 @@ mod tests {
         assert_eq!(
             parse(&args(&["-delete-unbranded"])),
             Command::DeleteUnbranded
+        );
+        assert_eq!(
+            parse(&args(&["-import-unmatched"])),
+            Command::ImportUnmatched
         );
         assert_eq!(parse(&args(&["-matrix-server"])), Command::MatrixServer);
     }
@@ -517,6 +661,11 @@ fn wants_yes_recognizes_yes_and_y() {
 #[test]
 fn confirm_with_yes_returns_true_without_reading_stdin() {
     assert!(confirm("Delete these rows? [y/N]", true).unwrap());
+}
+
+#[test]
+fn confirm_key_with_yes_returns_true_without_reading_stdin() {
+    assert!(confirm_key("Insert as canonical product? (y/N)", true).unwrap());
 }
 
     #[test]

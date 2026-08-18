@@ -17,6 +17,12 @@ pub struct ProductRow {
     pub name: String,
     /// The canonical brand name.
     pub brand: String,
+    /// The raw product name without brand and size.
+    #[serde(default)]
+    pub product_name: String,
+    /// The size (e.g. `100 ml`).
+    #[serde(default)]
+    pub size: String,
 }
 
 /// A provider product scraped from a store.
@@ -80,6 +86,16 @@ pub enum MatchInsert {
     Created,
     /// The pair already exists (unique index) — e.g. inserted by a concurrent
     /// run — so it counts as already computed.
+    AlreadyExists,
+}
+
+/// Outcome of inserting one canonical product.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ProductInsert {
+    /// The product was created.
+    Created,
+    /// A product with the same `(brand, product_name, size)` already exists
+    /// (unique index), so the insert was skipped.
     AlreadyExists,
 }
 

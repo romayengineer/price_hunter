@@ -25,6 +25,7 @@ fn product(id: &str, name: &str) -> ProductRow {
         id: id.to_string(),
         name: name.to_string(),
         brand: String::new(),
+        ..Default::default()
     }
 }
 

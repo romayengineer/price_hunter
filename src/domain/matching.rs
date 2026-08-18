@@ -93,6 +93,113 @@ pub fn best_match<'a>(
         })
 }
 
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Recognized product-size units, case-insensitive.
+fn is_size_unit(unit: &str) -> bool {
+    matches!(
+        unit.to_ascii_lowercase().as_str(),
+        "ml" | "g" | "gr" | "l" | "lt"
+    )
+}
+
+/// Normalizes a detected size: ml variants become `N ml`, other units keep
+/// their own unit (`132 g` → `132 g`).
+fn normalize_size(number: &str, unit: &str) -> String {
+    let unit = unit.to_ascii_lowercase();
+    if unit == "ml" {
+        format!("{number} ml")
+    } else {
+        format!("{number} {unit}")
+    }
+}
+
+/// Scans a number (and optional unit) starting at index `i`, returning the
+/// number's start, the normalized size, and the index just past it when it is
+/// a recognizable size.
+#[allow(clippy::cognitive_complexity)]
+fn size_at(chars: &[char], i: usize) -> Option<(usize, String, usize)> {
+    let num_start = i;
+    let mut i = i;
+    while i < chars.len() && chars[i].is_ascii_digit() {
+        i += 1;
+    }
+    let number: String = chars[num_start..i].iter().collect();
+    let mut j = i;
+    if j < chars.len() && chars[j].is_whitespace() {
+        j += 1;
+    }
+    let unit_start = j;
+    while j < chars.len() && chars[j].is_ascii_alphabetic() {
+        j += 1;
+    }
+    if unit_start < j {
+        let unit: String = chars[unit_start..j].iter().collect();
+        if is_size_unit(&unit) {
+            return Some((num_start, normalize_size(&number, &unit), j));
+        }
+    } else if j == chars.len() || chars[j..].iter().all(|c| c.is_whitespace()) {
+        return Some((num_start, format!("{number} ml"), j));
+    }
+    None
+}
+
+/// Strips a trailing size out of `name` and returns it normalized. Recognized:
+/// `100 ml`, `100ml`, `100 Ml`, `X50ML`, `132 g`, and a bare trailing number
+/// (`edp 50` → `50 ml`). Returns `(name_without_size, Some(size))`, or
+/// `(name, None)` when no size is present.
+pub fn split_size(name: &str) -> (String, Option<String>) {
+    let chars: Vec<char> = name.chars().collect();
+    let mut last: Option<(usize, String)> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit()
+            && let Some((start, size, next)) = size_at(&chars, i)
+        {
+            last = Some((start, size));
+            i = next;
+            continue;
+        }
+        i += 1;
+    }
+    match last {
+        Some((start, size)) => {
+            let before: String = chars[..start].iter().collect();
+            (collapse_whitespace(&before), Some(size))
+        }
+        None => (name.to_string(), None),
+    }
+}
+
+/// Removes `brand` from `name` (case-insensitive), collapsing the leftover
+/// whitespace. An empty brand returns the name untouched.
+pub fn strip_brand(name: &str, brand: &str) -> String {
+    if brand.is_empty() {
+        return collapse_whitespace(name);
+    }
+    let brand_lower: Vec<char> = brand.chars().map(|c| c.to_ascii_lowercase()).collect();
+    let name_chars: Vec<char> = name.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < name_chars.len() {
+        if i + brand_lower.len() <= name_chars.len()
+            && name_chars[i..i + brand_lower.len()]
+                .iter()
+                .map(|c| c.to_ascii_lowercase())
+                .eq(brand_lower.iter().copied())
+        {
+            i += brand_lower.len();
+            out.push(' ');
+        } else {
+            out.push(name_chars[i]);
+            i += 1;
+        }
+    }
+    collapse_whitespace(&out.into_iter().collect::<String>())
+}
+
 /// Greedily assigns canonical products to provider products within one
 /// provider group: sorts candidates by score (highest first) and claims a
 /// provider product iff it is not yet assigned and the product has not already
@@ -178,6 +285,32 @@ mod tests {
     #[test]
     fn full_name_trims_whitespace_parts() {
         assert_eq!(full_name("  ", "  a  ", "   "), "a");
+    }
+
+    #[test]
+    fn split_size_extracts_trailing_ml_size() {
+        assert_eq!(split_size("Gold Fresh Couture EDP 100 Ml"), ("Gold Fresh Couture EDP".to_string(), Some("100 ml".into())));
+        assert_eq!(split_size("edp 50"), ("edp".to_string(), Some("50 ml".into())));
+        assert_eq!(split_size("PAULVIC WOMAN X50ML"), ("PAULVIC WOMAN X".to_string(), Some("50 ml".into())));
+        assert_eq!(split_size("132 g"), ("".to_string(), Some("132 g".into())));
+        assert_eq!(split_size("One Million EDT"), ("One Million EDT".to_string(), None));
+        // A bare number in the middle is not a size.
+        assert_eq!(
+            split_size("set 212 men edt 100 + deo"),
+            ("set 212 men edt 100 + deo".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn strip_brand_removes_case_insensitively() {
+        assert_eq!(strip_brand("Adidas Vibes Smooth Pace", "adidas"), "Vibes Smooth Pace");
+        assert_eq!(
+            strip_brand("Dolce & Gabbana Original EDT", "dolce & gabbana"),
+            "Original EDT"
+        );
+        assert_eq!(strip_brand("Carolina Herrera 212 Vip", "carolina herrera"), "212 Vip");
+        assert_eq!(strip_brand("Plain Name", "diesel"), "Plain Name");
+        assert_eq!(strip_brand("  spaced   out  ", ""), "spaced out");
     }
 
     #[test]

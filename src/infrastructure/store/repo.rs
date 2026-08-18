@@ -10,12 +10,14 @@ use super::types::{
     BRANDS_COLLECTION, BrandLinkPayload, MatchListResponse, PRODUCTS_COLLECTION,
     PROVIDER_PRODUCT_IMAGES_COLLECTION, PROVIDER_PRODUCT_MATCHES_COLLECTION,
     PROVIDER_PRODUCT_PRICES_COLLECTION, PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION,
-    ProductLinkPayload, ProviderMatchPayload, ProviderPriceRow,
+    ProductImportPayload, ProductImportRow, ProductLinkPayload, ProviderMatchPayload,
+    ProviderPriceRow,
 };
 use crate::domain::error::PriceStoreError;
 use crate::domain::matching::{MIN_SCORE, MatchCandidate};
 use crate::domain::model::{
-    BrandRow, MatchInsert, ProductRow, ProviderMatchRow, ProviderProductRow, ProviderRow,
+    BrandRow, MatchInsert, ProductInsert, ProductRow, ProviderMatchRow, ProviderProductRow,
+    ProviderRow,
 };
 use crate::domain::ports::PriceStore;
 
@@ -401,6 +403,47 @@ impl PriceStore for Store {
         }
         self.agent_destroy(PROVIDER_PRODUCTS_COLLECTION, provider_product_id)?;
         Ok(())
+    }
+
+    /// Inserts one canonical product (active) unless a product with the same
+    /// `(brand, product_name, size)` already exists.
+    fn create_product(
+        &self,
+        brand: &str,
+        product_name: &str,
+        name: &str,
+        size: &str,
+    ) -> Result<ProductInsert, PriceStoreError> {
+        let filter = format!(
+            "brand='{}' && product_name='{}' && size='{}'",
+            escape_filter(brand),
+            escape_filter(product_name),
+            escape_filter(size)
+        );
+        let existing = self
+            .client
+            .records(PRODUCTS_COLLECTION)
+            .list()
+            .filter(&filter)
+            .per_page(1)
+            .call::<ProductImportRow>()
+            .context("could not look up product")?;
+        if existing.items.into_iter().next().is_some() {
+            return Ok(ProductInsert::AlreadyExists);
+        }
+        self.client
+            .records(PRODUCTS_COLLECTION)
+            .create(ProductImportPayload {
+                brand: brand.to_string(),
+                product_name: product_name.to_string(),
+                name: name.to_string(),
+                size: size.to_string(),
+                category: String::new(),
+                active: true,
+            })
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not create product: {e}"))?;
+        Ok(ProductInsert::Created)
     }
 
     fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>, PriceStoreError> {

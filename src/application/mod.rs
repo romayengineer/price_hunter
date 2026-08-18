@@ -3,6 +3,7 @@
 //! I/O directly — all persistence goes through the injected port.
 
 pub mod brands;
+pub mod imports;
 pub mod matching;
 pub mod matrix;
 pub mod reporter;

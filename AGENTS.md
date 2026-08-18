@@ -151,6 +151,17 @@ password = "change-me"          # required; first run writes a commented templat
   `name` backstops idempotency. The collection is created by migration
   `1787000002_brand.js` and is intended for later use in flagging
   provider_products whose names contain no known brand.
+- `cargo run -- -import-unmatched` proposes canonical `products` rows from
+  unmatched provider products (`product_id` empty). Each name is split into
+  brand (guessed from the `brand` table, all brand tokens must appear),
+  product_name, and size (trailing number normalized to `N ml`, other units
+  like `g`/`l` preserved). Proposals that already exist in `products` (same
+  full name) or duplicate an earlier proposal are dropped, and the rest are
+  inserted **one at a time** after a single-key `(y/N)` prompt — `y` inserts,
+  anything else skips (pressing just `y`, no Enter needed, via raw-mode
+  `termios` reads). The insert respects the `(brand, product_name, size)`
+  unique index, so an `AlreadyExists` is reported instead of a 400. Add `-yes`
+  to insert every proposal without prompting.
 - `cargo run -- -match-products` scores every (provider product × canonical
   product) comparison and stores it in `provider_product_matches` **only when
   the score ≥ `MIN_SCORE` (0.6)** — weaker pairs are scored but never written,
@@ -222,6 +233,11 @@ password = "change-me"          # required; first run writes a commented templat
   numeric prices, blank cell when a provider doesn't carry the product,
   UTF-8 BOM so Excel detects the encoding). Built from `Store::matrix()`, so
   rows are the same as `GET /matrix` (products priced at ≥2 providers).
+- `cargo run -- -export-products <file.csv>` writes the canonical `products`
+  table to a CSV with `brand,product_name,size` columns (one row per product,
+  sorted by display name, UTF-8 BOM for Excel). Exports every product
+  including inactive ones. Note: the header row means the file is not a
+  drop-in `-import-products` input (the importer does not skip headers).
 
 ## UI
 - A Flutter (macOS) app lives in the sibling repo

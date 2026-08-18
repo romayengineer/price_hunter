@@ -152,22 +152,25 @@ password = "change-me"          # required; first run writes a commented templat
   `1787000002_brand.js` and is intended for later use in flagging
   provider_products whose names contain no known brand.
 - `cargo run -- -match-products` scores every (provider product × canonical
-  product) comparison and stores it in `provider_product_matches` **with any
-  score 0.0–1.0** (the `score` field is non-required so exact-zero scores are
-  storable). Comparisons already computed on a previous run are skipped — the
-  cache is the source of truth, so re-runs only compute new pairs. Each score
-  is written **immediately after it is computed** (one insert per HTTP request,
-  via a pooled `ureq::Agent` so bulk inserts reuse one TCP connection instead of
-  exhausting macOS ephemeral ports), so a crash loses no completed scores. The
-  existing comparisons are loaded per provider product with indexed filter
-  queries (a full-table OFFSET scan is ~140 ms/page and scales with the cache).
-  A `Progress: X.XX%` line is redrawn in place during the backfill. A pair
-  that already exists (unique index — e.g. a concurrent run inserted it) is
-  reported as already computed instead of aborting with a 400. After the
-  cache is up to date, provider products are linked using stored scores ≥
-  `MIN_SCORE` (0.6). The `score` field was made non-required by migration
+  product) comparison and stores it in `provider_product_matches` **only when
+  the score ≥ `MIN_SCORE` (0.6)** — weaker pairs are scored but never written,
+  so they are recomputed on a later run instead of accumulating in the table.
+  Comparisons already stored on a previous run are skipped, so re-runs only
+  compute new pairs. Each qualifying score is written **immediately after it is
+  computed** (one insert per HTTP request, via a pooled `ureq::Agent` so bulk
+  inserts reuse one TCP connection instead of exhausting macOS ephemeral
+  ports), so a crash loses no completed scores. The existing comparisons are
+  loaded per provider product with indexed filter queries (a full-table OFFSET
+  scan is ~140 ms/page and scales with the stored subset). A
+  `Progress: X.XX%` line is redrawn in place during the backfill. A pair that
+  already exists (unique index — e.g. a concurrent run inserted it) is reported
+  as already computed instead of aborting with a 400. After the backfill,
+  provider products are linked using the stored scores ≥ `MIN_SCORE`. Note:
+  existing rows below 0.6 (written by older versions that cached every score)
+  are left in place — they count as already-computed skips but are never linked.
+  The `score` field was made non-required by migration
   `1787000001_allow_zero_scores.js` — PocketBase treats `required` numbers as
-  blank when they are 0.
+  blank when they are 0; the migration is now moot but kept for history.
 - `cargo run -- -link-matches` re-links provider products to canonical products
   using **only the already-stored comparisons** (queries just the `score >=
   MIN_SCORE` subset — no backfill, completes in seconds). Use it to refresh

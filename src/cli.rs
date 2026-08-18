@@ -171,7 +171,7 @@ fn match_products() -> anyhow::Result<()> {
     let store = connect()?;
     let summary = matching::match_products(&store, &mut StdoutReporter::new())?;
     println!(
-        "Computed {} new comparisons ({} already stored)",
+        "Stored {} new matches ({} already stored)",
         summary.computed, summary.already_stored
     );
     println!(

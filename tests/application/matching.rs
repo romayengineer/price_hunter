@@ -55,15 +55,41 @@ fn match_products_scores_pairs_and_links_exact_winners() {
 
     let summary = match_products(&fake, &mut NoopReporter).expect("matching should succeed");
 
-    assert_eq!(summary.computed, 4);
+    assert_eq!(summary.computed, 2);
     assert_eq!(summary.already_stored, 0);
     assert_eq!(summary.provider_products, 2);
     assert_eq!(summary.matched, 2);
     let links = fake.product_links();
     assert_eq!(links.get("pp1"), Some(&Some("p1".to_string())));
     assert_eq!(links.get("pp2"), Some(&Some("p2".to_string())));
-    // Every (provider product × canonical product) pair is scored and stored.
-    assert_eq!(fake.matches().len(), 4);
+    // Only pairs scored at or above MIN_SCORE are stored: the two exact
+    // matches (pp1×p1, pp2×p2) are kept, the two unrelated cross pairs are
+    // scored but never written.
+    assert_eq!(fake.matches().len(), 2);
+    assert!(
+        fake.matches().iter().all(|m| m.score >= 0.6),
+        "only matches with score >= 0.6 are stored"
+    );
+}
+
+#[test]
+fn match_products_does_not_store_below_threshold_pairs() {
+    let mut fake = FakeStore::default();
+    fake.providers.push(provider("prov1"));
+    fake.products
+        .push(product("p1", "Diesel Fuel For Life EDT 125 ml"));
+    fake.provider_products
+        .push(provider_product("pp1", "Completely Unrelated Name"));
+
+    let summary = match_products(&fake, &mut NoopReporter).expect("matching should succeed");
+
+    assert_eq!(summary.computed, 0);
+    assert_eq!(summary.matched, 0);
+    assert_eq!(
+        fake.matches().len(),
+        0,
+        "a below-threshold pair must not be stored"
+    );
 }
 
 #[test]

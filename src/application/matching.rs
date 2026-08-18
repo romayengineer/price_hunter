@@ -12,7 +12,8 @@ use crate::domain::ports::PriceStore;
 /// Outcome of one `-match-products` run.
 #[derive(Debug)]
 pub struct MatchSummary {
-    /// New comparisons scored and stored during the backfill.
+    /// New comparison rows stored (only pairs scored at or above `MIN_SCORE`
+    /// are written; weaker pairs are scored but not kept).
     pub computed: usize,
     /// Comparisons already present from a previous run (skipped).
     pub already_stored: usize,
@@ -33,12 +34,13 @@ pub struct LinkSummary {
 
 /// Runs the fuzzy matcher between provider products and canonical
 /// products. Every (provider product, canonical product) comparison is
-/// scored and stored in `provider_product_matches` — pairs already
-/// computed on a previous run are skipped, and each new score is written
-/// immediately (one insert at a time) so a crash never loses progress.
-/// After the cache is up to date, the best match per provider product is
-/// linked (per-provider exclusivity) using the stored scores at or above
-/// `MIN_SCORE`. Progress is reported through `reporter`.
+/// scored; pairs at or above `MIN_SCORE` are stored in
+/// `provider_product_matches` (weaker scores are recomputed on a later run,
+/// never cached). Pairs already stored on a previous run are skipped, and
+/// each new score is written immediately (one insert at a time) so a crash
+/// never loses progress. After the backfill, the best match per provider
+/// product is linked (per-provider exclusivity) using the stored scores at
+/// or above `MIN_SCORE`. Progress is reported through `reporter`.
 pub fn match_products(
     store: &impl PriceStore,
     reporter: &mut dyn Reporter,
@@ -111,9 +113,9 @@ fn finish_linking(
 }
 
 /// Scores and stores every (provider product, product) pair not already
-/// present in `stored_pairs`, one insert at a time. New above-threshold
-/// pairs are appended to `candidates`. Returns how many comparisons were
-/// computed.
+/// present in `stored_pairs`, one insert at a time. Only pairs scored at or
+/// above `MIN_SCORE` are written and appended to `candidates`. Returns how
+/// many comparison rows were stored.
 fn backfill_comparisons(
     store: &impl PriceStore,
     provider_products: &[ProviderProductRow],
@@ -136,10 +138,10 @@ fn backfill_comparisons(
     Ok(computed)
 }
 
-/// Scores one pair unless it is already stored, writing the score
-/// immediately. Returns 1 when a new comparison was computed, 0 when the
-/// pair was already cached (including when another process just inserted
-/// it).
+/// Scores one pair unless it is already stored. Pairs at or above `MIN_SCORE`
+/// are written immediately and appended to `candidates`; weaker pairs are
+/// scored but not stored. Returns 1 when a new match row was created, 0
+/// otherwise (already cached, or scored below the threshold).
 fn backfill_pair(
     store: &impl PriceStore,
     pp: &ProviderProductRow,
@@ -152,10 +154,17 @@ fn backfill_pair(
         return Ok(0);
     }
     let score = similarity(&pp.name, &product.name);
-    let created = matches!(
-        store.create_match(&pair.0, &pair.1, score)?,
-        MatchInsert::Created
-    );
+    // Only comparisons at or above `MIN_SCORE` are worth keeping: weaker
+    // scores are recomputed on a later run instead of accumulating in
+    // `provider_product_matches`.
+    let created = if score >= MIN_SCORE {
+        matches!(
+            store.create_match(&pair.0, &pair.1, score)?,
+            MatchInsert::Created
+        )
+    } else {
+        false
+    };
     stored_pairs.insert(pair);
     if score >= MIN_SCORE {
         candidates.push(MatchCandidate {

@@ -146,7 +146,7 @@ password = "change-me"          # required; first run writes a commented templat
   *save* is logged and never crashes the browser session — but the startup
   *connection* is mandatory (`main` exits if it cannot connect).
 - `cargo run -- -import-brands <file.csv>` imports the canonical brand list
-  (one column, brand name) into the `brand` collection. A leading `brand`
+  (one column, brand name) into the `brand` collection. A leading `name`
   header row, empty rows and duplicates are skipped; the unique index on
   `name` backstops idempotency. The collection is created by migration
   `1787000002_brand.js` and is intended for later use in flagging
@@ -239,8 +239,9 @@ password = "change-me"          # required; first run writes a commented templat
   including inactive ones. Note: the header row means the file is not a
   drop-in `-import-products` input (the importer does not skip headers).
 - `cargo run -- -export-brands <file.csv>` writes the canonical `brand` table
-  to a CSV with a single `brand` column (one row per brand, sorted by name,
-  UTF-8 BOM for Excel). Exports every brand.
+  to a CSV with a single `name` column (one row per brand, sorted by name,
+  UTF-8 BOM for Excel). Exports every brand. The `name` header matches the
+  table column, so the file round-trips through `-import-brands`.
 
 ## UI
 - A Flutter (macOS) app lives in the sibling repo

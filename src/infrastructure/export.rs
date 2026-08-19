@@ -66,14 +66,14 @@ pub fn products_to_csv(products: &[ProductRow]) -> Result<String> {
     Ok(csv)
 }
 
-/// Serializes the canonical brands as CSV with a single `brand` column, one
+/// Serializes the canonical brands as CSV with a single `name` column, one
 /// row per brand sorted by name. A UTF-8 BOM is prepended so Excel detects
 /// the encoding.
 pub fn brands_to_csv(brands: &[BrandRow]) -> Result<String> {
     let mut order: Vec<usize> = (0..brands.len()).collect();
     order.sort_by(|&a, &b| brands[a].name.to_lowercase().cmp(&brands[b].name.to_lowercase()));
     let mut writer = csv::Writer::from_writer(Vec::new());
-    writer.write_record(["brand"])?;
+    writer.write_record(["name"])?;
     for i in order {
         writer.write_record([brands[i].name.as_str()])?;
     }
@@ -96,7 +96,7 @@ mod tests {
     use crate::domain::model::{MatrixProvider, MatrixRow};
 
     #[test]
-    fn brands_to_csv_writes_single_brand_column_sorted() {
+    fn brands_to_csv_writes_single_name_column_sorted() {
         let brands = vec![
             BrandRow {
                 id: "b2".to_string(),
@@ -110,7 +110,7 @@ mod tests {
         let csv = brands_to_csv(&brands).unwrap();
         assert!(csv.starts_with('\u{feff}'));
         let body = csv.trim_start_matches('\u{feff}');
-        assert_eq!(body, "brand\nAlfa\nzeta\n");
+        assert_eq!(body, "name\nAlfa\nzeta\n");
     }
 
     #[test]

@@ -122,10 +122,12 @@ impl AutoScraper for ScrollAndClick {
             if let Some(button) =
                 find_load_more_button(driver, self.selector.as_deref()).await?
             {
+                log::info!("scroll-click: found load-more button, clicking");
                 click_load_more(driver, &button).await?;
                 return Ok(true);
             }
             if scroll_down(driver).await? {
+                log::info!("scroll-click: page bottom reached, no load-more button found");
                 return Ok(false);
             }
         }
@@ -189,9 +191,15 @@ impl PageParam {
 impl AutoScraper for PageParam {
     async fn next(&mut self, driver: &WebDriver) -> Result<bool> {
         self.page += 1;
-        driver.goto(&page_url(&self.base_url, &self.param, self.page)).await?;
+        let url = page_url(&self.base_url, &self.param, self.page);
+        log::info!("page strategy: navigating to page {} ({url})", self.page);
+        driver.goto(&url).await?;
         let source = driver.source().await?;
-        Ok(detect::detect_grid(&source).is_some())
+        let has_grid = detect::detect_grid(&source).is_some();
+        if !has_grid {
+            log::info!("page strategy: page {} has no grid, stopping", self.page);
+        }
+        Ok(has_grid)
     }
 }
 
@@ -290,6 +298,10 @@ impl AutoScraper for WindowedAutoScraper {
                     driver.goto(&url).await?;
                     return Ok(true);
                 }
+                log::debug!(
+                    "window: {count} products < threshold {}, continuing ({current_url})",
+                    self.threshold
+                );
             }
         }
         self.inner.next(driver).await
@@ -297,10 +309,17 @@ impl AutoScraper for WindowedAutoScraper {
 }
 
 async fn peek_count(driver: &WebDriver) -> Result<usize> {
+    let url = driver
+        .current_url()
+        .await
+        .map(|u| u.to_string())
+        .unwrap_or_default();
     let source = driver.source().await?;
-    Ok(detect::detect_grid(&source)
+    let count = detect::detect_grid(&source)
         .map(|d| d.products.len())
-        .unwrap_or(0))
+        .unwrap_or(0);
+    log::debug!("window peek: {count} products on {url}");
+    Ok(count)
 }
 
 /// The default strategy for a host. Unknown hosts default to scroll-click, the
@@ -374,6 +393,11 @@ impl NoGrowthTracker {
             self.rounds < self.limit
         }
     }
+
+    /// The number of consecutive non-growing rounds so far.
+    pub fn rounds(&self) -> usize {
+        self.rounds
+    }
 }
 
 /// Drives `strategy` over the page `driver` currently shows, repeating the
@@ -403,7 +427,10 @@ pub async fn scrape_until_no_growth(
     };
 
     state.last_count = detect_products(driver, &mut state).await?;
-    log::info!("auto-scrape initial: best = {} products", state.last_count);
+    log::info!(
+        "auto-scrape initial: best = {} products (load_timeout={load_timeout:?}, max_steps={max_steps})",
+        state.last_count
+    );
 
     run_loop(driver, strategy, &mut state, load_timeout, max_steps).await?;
     Ok(state.best)
@@ -420,9 +447,10 @@ async fn run_loop(
 ) -> Result<()> {
     for step in 0..max_steps {
         if !auto_scrape_iteration(driver, strategy, state, load_timeout, step).await? {
-            break;
+            return Ok(());
         }
     }
+    log::info!("auto-scrape reached max_steps={max_steps}, stopping");
     Ok(())
 }
 
@@ -437,6 +465,7 @@ struct ScrapeState<'a> {
 /// One iteration of the auto-scrape loop: advances the strategy (one load-more
 /// action), waits for its products to load, and records the step in the
 /// no-growth tracker. Returns `false` when the loop should stop.
+#[allow(clippy::cognitive_complexity)]
 async fn auto_scrape_iteration(
     driver: &WebDriver,
     strategy: &mut dyn AutoScraper,
@@ -445,12 +474,20 @@ async fn auto_scrape_iteration(
     step: usize,
 ) -> Result<bool> {
     if !strategy.next(driver).await? {
+        log::info!("auto-scrape step {step}: strategy exhausted");
         return Ok(false);
     }
     let count = wait_for_growth(driver, state, state.last_count, load_timeout).await?;
     state.last_count = count;
     let keep_going = state.tracker.record(count);
-    log::info!("auto-scrape step {step}: best = {count} products");
+    if !keep_going {
+        log::info!(
+            "auto-scrape step {step}: no growth for {} rounds, stopping (best = {count} products)",
+            state.tracker.rounds()
+        );
+    } else {
+        log::info!("auto-scrape step {step}: best = {count} products");
+    }
     Ok(keep_going)
 }
 
@@ -460,10 +497,18 @@ async fn auto_scrape_iteration(
 /// (`WINDOW_RELOADED`), the new window's grid replaces `best` even when
 /// smaller, and the no-growth tracker is reset so subsequent growth in the
 /// new window is not treated as a stall.
+#[allow(clippy::cognitive_complexity)]
 async fn detect_products(driver: &WebDriver, state: &mut ScrapeState<'_>) -> Result<usize> {
+    let url = driver
+        .current_url()
+        .await
+        .map(|u| u.to_string())
+        .unwrap_or_default();
     let source = driver.source().await?;
     let Some(detection) = detect::detect_grid(&source) else {
+        log::info!("no product grid on {url}");
         if WINDOW_RELOADED.swap(false, Ordering::SeqCst) {
+            log::info!("window reload: resetting best after navigation to {url}");
             state.best = None;
             state.tracker.best = 0;
             state.tracker.rounds = 0;
@@ -472,7 +517,14 @@ async fn detect_products(driver: &WebDriver, state: &mut ScrapeState<'_>) -> Res
         return Ok(count_of(&state.best));
     };
     let count = detection.products.len();
+    let container = &detection.container;
+    log::info!(
+        "detected {count} products on {url} (container: {:?}, child_count: {})",
+        container.classes,
+        container.child_count
+    );
     if WINDOW_RELOADED.swap(false, Ordering::SeqCst) {
+        log::info!("window reload: replacing best with {count} products after navigation to {url}");
         state.best = Some(detection);
         state.tracker.best = count;
         state.tracker.rounds = 0;
@@ -480,6 +532,7 @@ async fn detect_products(driver: &WebDriver, state: &mut ScrapeState<'_>) -> Res
         return Ok(count);
     }
     if state.best.as_ref().is_none_or(|b| count > b.products.len()) {
+        log::info!("new best: {count} products (was {})", count_of(&state.best));
         state.best = Some(detection);
         (state.on_growth)(state.best.as_ref().expect("best was just set"));
     }
@@ -499,9 +552,11 @@ async fn wait_for_growth(
     loop {
         let count = detect_products(driver, state).await?;
         if count > before {
+            log::info!("product count grew from {before} to {count}");
             return Ok(count);
         }
         if tokio::time::Instant::now() >= deadline {
+            log::info!("waited {timeout:?} for product count to grow from {before}, current = {count}");
             return Ok(count);
         }
         tokio::time::sleep(POLL_INTERVAL).await;

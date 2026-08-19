@@ -100,7 +100,7 @@ impl AutoScraper for ScrollAndClick {
             if let Some(button) =
                 find_load_more_button(driver, self.selector.as_deref()).await?
             {
-                button.click().await?;
+                click_load_more(driver, &button).await?;
                 return Ok(true);
             }
             if scroll_down(driver).await? {
@@ -108,6 +108,20 @@ impl AutoScraper for ScrollAndClick {
             }
         }
     }
+}
+
+/// Clicks a load-more button robustly: scrolls it into view, then tries a
+/// normal click, falling back to a JavaScript click when the browser reports
+/// the click was intercepted (common when the button is at the very bottom and
+/// a product image overlaps its hit area).
+async fn click_load_more(driver: &WebDriver, button: &WebElement) -> Result<()> {
+    let _ = button.scroll_into_view().await;
+    if button.click().await.is_ok() {
+        return Ok(());
+    }
+    let args = vec![button.to_json()?];
+    let _ = driver.execute("arguments[0].click()", args).await;
+    Ok(())
 }
 
 /// Scrolls the page to the bottom on every call, letting infinite scroll load
@@ -241,13 +255,36 @@ pub async fn scrape_until_no_growth(
 ) -> Result<Option<Detection>> {
     let mut tracker = NoGrowthTracker::new(NO_GROWTH_LIMIT);
     let mut best: Option<Detection> = None;
-    for _ in 0..max_steps {
-        if !scrape_step(driver, strategy, &mut best, &mut tracker).await? {
+    for step in 0..max_steps {
+        if !auto_scrape_step(driver, strategy, &mut best, &mut tracker, step).await? {
             break;
         }
         tokio::time::sleep(settle).await;
     }
     Ok(best)
+}
+
+/// Runs one iteration of the auto-scrape loop: records the current product
+/// count, logs progress, and advances the strategy. Returns whether scraping
+/// should continue.
+async fn auto_scrape_step(
+    driver: &WebDriver,
+    strategy: &mut dyn AutoScraper,
+    best: &mut Option<Detection>,
+    tracker: &mut NoGrowthTracker,
+    step: usize,
+) -> Result<bool> {
+    let keep_going = scrape_step(driver, strategy, best, tracker).await?;
+    log::info!(
+        "auto-scrape step {step}: best = {} products",
+        count_of(best)
+    );
+    Ok(keep_going)
+}
+
+/// The number of products in the best detection so far (0 when none).
+fn count_of(best: &Option<Detection>) -> usize {
+    best.as_ref().map_or(0, |d| d.products.len())
 }
 
 /// One iteration of the auto-scrape loop: record the current product count and
@@ -320,7 +357,10 @@ async fn find_load_more_button(
     if let Some(selector) = selector {
         return Ok(driver.find(By::Css(selector)).await.ok());
     }
-    find_by_heuristic_selector(driver).await.or(Ok(find_by_heuristic_text(driver).await))
+    if let Some(element) = find_by_heuristic_selector(driver).await? {
+        return Ok(Some(element));
+    }
+    Ok(find_by_heuristic_text(driver).await)
 }
 
 /// Finds the first visible element matching a heuristic load-more selector.
@@ -357,6 +397,11 @@ async fn matches_heuristic_text(element: &WebElement) -> bool {
     let Some(text) = element.text().await.ok() else {
         return false;
     };
+    text_matches_heuristic(&text)
+}
+
+/// Whether `text` matches a known load-more phrase (case-insensitively).
+fn text_matches_heuristic(text: &str) -> bool {
     HEURISTIC_TEXTS.iter().any(|t| text.to_lowercase().contains(t))
 }
 
@@ -397,6 +442,21 @@ mod tests {
             page_url("https://example.com/list?sort=price", "page", 3),
             "https://example.com/list?sort=price&page=3"
         );
+    }
+
+    #[test]
+    fn text_matches_heuristic_recognizes_load_more_phrases() {
+        assert!(text_matches_heuristic("Mostrar más"));
+        assert!(text_matches_heuristic("MOSTRAR MÁS"));
+        assert!(text_matches_heuristic("Ver más productos"));
+        assert!(text_matches_heuristic("Load more"));
+    }
+
+    #[test]
+    fn text_matches_heuristic_rejects_unrelated_text() {
+        assert!(!text_matches_heuristic("Añadir al carrito"));
+        assert!(!text_matches_heuristic(""));
+        assert!(!text_matches_heuristic("Comprar ahora"));
     }
 
     #[test]

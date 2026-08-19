@@ -14,6 +14,7 @@ pub mod infrastructure;
 
 pub use crate::domain::detect;
 pub use crate::domain::matching;
+pub use crate::infrastructure::autoscrape;
 pub use crate::infrastructure::browser;
 pub use crate::infrastructure::capture;
 pub use crate::infrastructure::config;

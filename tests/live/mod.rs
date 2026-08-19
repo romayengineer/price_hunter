@@ -1,3 +1,4 @@
+pub mod autoscrape;
 pub mod beauty24;
 pub mod compreahora;
 pub mod fabilu;

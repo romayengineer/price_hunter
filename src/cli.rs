@@ -10,6 +10,7 @@ use thirtyfour::prelude::*;
 
 use price_hunter::application::reporter::Reporter;
 use price_hunter::application::{brands, imports, matching, matrix};
+use price_hunter::autoscrape::{self, AutoScrapeOptions, StrategyKind};
 use price_hunter::browser;
 use price_hunter::capture;
 use price_hunter::config;
@@ -47,6 +48,8 @@ pub enum Command {
     ImportUnmatched,
     /// `-matrix-server`
     MatrixServer,
+    /// `-auto-scrape <url> [-strategy <name>] [-button <css>] [-page-param <name>] [-headless]`
+    AutoScrape(AutoScrapeOptions),
     /// Default: open a browser, optionally at a URL, and poll for captures.
     Browse(Option<String>),
 }
@@ -92,7 +95,32 @@ pub fn parse(args: &[String]) -> Command {
     if rest.iter().any(|a| a == "-matrix-server") {
         return Command::MatrixServer;
     }
+    if let Some(url) = arg_after_string(rest, "-auto-scrape") {
+        return Command::AutoScrape(parse_auto_scrape(rest, url));
+    }
     Command::Browse(rest.iter().find(|a| !a.starts_with('-')).cloned())
+}
+
+/// Collects the `-auto-scrape` modifier flags (`-strategy`, `-button`,
+/// `-page-param`, `-headless`) into [`AutoScrapeOptions`] for `url`.
+#[allow(clippy::cognitive_complexity)]
+fn parse_auto_scrape(rest: &[String], url: String) -> AutoScrapeOptions {
+    let strategy = arg_after_string(rest, "-strategy").map(|s| match s.to_ascii_lowercase().as_str() {
+        "scroll-click" | "scroll_click" | "scrollclick" => StrategyKind::ScrollClick,
+        "infinite" | "infinite-scroll" | "scroll" => StrategyKind::InfiniteScroll,
+        "page" | "pagination" => StrategyKind::Page,
+        _ => StrategyKind::ScrollClick,
+    });
+    let button = arg_after_string(rest, "-button");
+    let page_param = arg_after_string(rest, "-page-param").unwrap_or_default();
+    let headless = rest.iter().any(|a| a == "-headless");
+    AutoScrapeOptions {
+        url,
+        strategy,
+        button,
+        page_param,
+        headless,
+    }
 }
 
 /// Whether the command line carries a global auto-accept flag (`-yes`/`-y`).
@@ -106,6 +134,12 @@ pub fn wants_yes(args: &[String]) -> bool {
 fn arg_after(rest: &[String], flag: &str) -> Option<PathBuf> {
     let i = rest.iter().position(|a| a == flag)?;
     rest.get(i + 1).cloned().map(PathBuf::from)
+}
+
+/// The value following `flag` in `rest` as a string, if present.
+fn arg_after_string(rest: &[String], flag: &str) -> Option<String> {
+    let i = rest.iter().position(|a| a == flag)?;
+    rest.get(i + 1).cloned()
 }
 
 /// Dispatches `command` and reports its result on stdout. `yes` auto-accepts
@@ -124,6 +158,7 @@ pub async fn run(command: Command, yes: bool) -> anyhow::Result<()> {
         Command::DeleteUnbranded => delete_unbranded(yes),
         Command::ImportUnmatched => import_unmatched(yes),
         Command::MatrixServer => matrix_server().await,
+        Command::AutoScrape(options) => auto_scrape(&options).await,
         Command::Browse(url) => browse(url).await,
     }
 }
@@ -446,6 +481,82 @@ async fn browse(url: Option<String>) -> anyhow::Result<()> {
     driver.quit().await.map_err(Into::into)
 }
 
+/// Automatically scrapes a listing page to completion: drives the site-specific
+/// [`AutoScraper`] strategy (scroll+click, infinite scroll, or `page=N`) until
+/// the detected product count stops increasing, then persists the largest grid
+/// to a JSON file and to PocketBase. Runs headless or visible per `options`.
+async fn auto_scrape(options: &AutoScrapeOptions) -> anyhow::Result<()> {
+    if options.url.is_empty() {
+        anyhow::bail!("-auto-scrape requires a URL argument");
+    }
+    let store = connect()?;
+    let _instance = InstanceGuard::acquire().context("cannot take single-instance lock")?;
+    let driver = browser::launch_with(options.headless).await?;
+    let result = auto_scrape_with_driver(&driver, options, &store).await;
+    let quit = driver.quit().await;
+    result?;
+    quit.map_err(Into::into)
+}
+
+/// Runs the auto-scrape loop on an already-launched `driver`, persisting the
+/// final grid. Returns the number of products scraped.
+async fn auto_scrape_with_driver(
+    driver: &WebDriver,
+    options: &AutoScrapeOptions,
+    store: &Store,
+) -> anyhow::Result<usize> {
+    let url = &options.url;
+    println!("Navigating to {url}");
+    driver.goto(url).await.with_context(|| format!("could not navigate to {url}"))?;
+
+    let mut strategy = autoscrape::strategy_for(url, options);
+    println!(
+        "Auto-scraping {url} with {} strategy",
+        strategy_kind_name(autoscrape::effective_strategy(url, options))
+    );
+    let detection = autoscrape::scrape_until_no_growth(
+        driver,
+        strategy.as_mut(),
+        autoscrape::SETTLE,
+        autoscrape::MAX_STEPS,
+    )
+    .await?;
+
+    let Some(detection) = detection else {
+        println!("No product grid detected on {url}");
+        return Ok(0);
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let path = match capture::write_capture("captures", url, &detection) {
+        Ok(path) => path,
+        Err(e) => {
+            anyhow::bail!("could not write capture for {url}: {e}");
+        }
+    };
+    println!(
+        "Scraped {} products to {}",
+        detection.products.len(),
+        path.display()
+    );
+    if let Err(e) = store.save(url, now, &path.display().to_string(), &detection) {
+        log::error!("Could not persist capture to the store: {e}");
+    }
+    Ok(detection.products.len())
+}
+
+/// A short display name for a strategy kind, for user-facing output.
+fn strategy_kind_name(kind: StrategyKind) -> &'static str {
+    match kind {
+        StrategyKind::ScrollClick => "scroll-and-click",
+        StrategyKind::InfiniteScroll => "infinite scroll",
+        StrategyKind::Page => "page parameter",
+    }
+}
+
 /// Drives the browser poll loop until the window is closed.
 async fn run_session(driver: &WebDriver, url: Option<String>, store: Store) -> anyhow::Result<()> {
     navigate_to_arg(driver, url).await;
@@ -650,6 +761,50 @@ mod tests {
             Command::ImportUnmatched
         );
         assert_eq!(parse(&args(&["-matrix-server"])), Command::MatrixServer);
+    }
+
+    #[test]
+    fn auto_scrape_flag_collects_url_and_modifiers() {
+        assert_eq!(
+            parse(&args(&["-auto-scrape", "https://example.com/list"])),
+            Command::AutoScrape(AutoScrapeOptions {
+                url: "https://example.com/list".to_string(),
+                strategy: None,
+                button: None,
+                page_param: String::new(),
+                headless: false,
+            })
+        );
+        assert_eq!(
+            parse(&args(&[
+                "-auto-scrape",
+                "https://example.com/list",
+                "-strategy",
+                "page",
+                "-page-param",
+                "pg",
+                "-button",
+                ".load-more",
+                "-headless"
+            ])),
+            Command::AutoScrape(AutoScrapeOptions {
+                url: "https://example.com/list".to_string(),
+                strategy: Some(StrategyKind::Page),
+                button: Some(".load-more".to_string()),
+                page_param: "pg".to_string(),
+                headless: true,
+            })
+        );
+        assert_eq!(
+            parse(&args(&["-auto-scrape", "u", "-strategy", "infinite"])),
+            Command::AutoScrape(AutoScrapeOptions {
+                url: "u".to_string(),
+                strategy: Some(StrategyKind::InfiniteScroll),
+                button: None,
+                page_param: String::new(),
+                headless: false,
+            })
+        );
     }
 
 #[test]

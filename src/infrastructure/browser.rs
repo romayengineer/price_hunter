@@ -9,10 +9,19 @@ use thirtyfour::prelude::*;
 /// Launches Chrome with the project's persistent profile and returns a
 /// `WebDriver` handle to it.
 pub async fn launch() -> WebDriverResult<WebDriver> {
+    launch_with(false).await
+}
+
+/// Launches Chrome with the project's persistent profile, optionally in
+/// headless mode, and returns a `WebDriver` handle to it.
+pub async fn launch_with(headless: bool) -> WebDriverResult<WebDriver> {
     let profile_dir = profile_dir();
     std::fs::create_dir_all(&profile_dir)?;
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg(&format!("--user-data-dir={}", profile_dir.display()))?;
+    if headless {
+        caps.add_arg("--headless=new")?;
+    }
     WebDriver::managed(caps).await
 }
 

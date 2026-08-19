@@ -7,8 +7,21 @@ arbitrary e-commerce HTML and captures them as JSON. Uses `thirtyfour`
 
 - `src/detect.rs` — pure HTML → `Detection` pipeline (no browser needed; the
   heart of the project).
-- `src/browser.rs` — launches Chrome via a persistent profile.
+- `src/browser.rs` — launches Chrome via a persistent profile. `launch()`
+  opens a visible window; `launch_with(headless: bool)` adds
+  `--headless=new` for headless runs (both use the same persistent profile).
 - `src/capture.rs` — writes JSON captures under `captures/<host>/`.
+- `src/autoscrape.rs` — automatic site scraping. The `AutoScraper` trait
+  abstracts how a listing page reveals more products (site-specific); concrete
+  strategies are `ScrollAndClick` (scroll down and click a load-more button,
+  explicit CSS selector or heuristic), `InfiniteScroll` (scroll to bottom; the
+  count-based termination decides the end) and `PageParam` (navigate
+  `?page=N` until a page has no grid). `scrape_until_no_growth` drives any
+  strategy: it re-detects the product count after every step and stops when the
+  count stops increasing for `NO_GROWTH_LIMIT` rounds (or the strategy reports
+  exhaustion / `MAX_STEPS` is hit). `strategy_for(url, &AutoScrapeOptions)`
+  picks the strategy from a host registry (`default_strategy`) with CLI
+  overrides.
 - `src/store.rs` — persists detections to a running PocketBase via its Record
   API using the `pocketbase-sdk` crate (async HTTP, no SQL, no DB file access).
   Writes the normalized schema (`providers`, `scrapes`, `provider_products`,
@@ -242,6 +255,23 @@ password = "change-me"          # required; first run writes a commented templat
   to a CSV with a single `name` column (one row per brand, sorted by name,
   UTF-8 BOM for Excel). Exports every brand. The `name` header matches the
   table column, so the file round-trips through `-import-brands`.
+- `cargo run -- -auto-scrape <url>` automatically scrapes a listing page to
+  completion and persists the largest grid detected (JSON capture +
+  PocketBase, same as the browse mode). It navigates to `url`, then drives the
+  site-specific strategy until the detected product count stops increasing:
+  - default (and unknown hosts): scroll down and click a load-more button
+    (`-button <css>` forces the selector; otherwise common load-more
+    classes/aria/text are tried),
+  - `-strategy infinite`: infinite scroll (no button; the loop stops when the
+    count stops growing),
+  - `-strategy page` (+ `-page-param <name>`, default `page`): navigate
+    `?page=N` until a page has no grid.
+  Known hosts pick a default via `autoscrape::default_strategy` (e.g.
+  `www.parfumerie.com.ar` → infinite scroll); `-strategy` overrides. Add
+  `-headless` to run without a visible window (same persistent profile and
+  single-instance lock as `cargo run`, so a running browser session is killed
+  first). Exits when the count stops increasing, the strategy is exhausted, or
+  the `MAX_STEPS` budget is spent.
 
 ## UI
 - A Flutter (macOS) app lives in the sibling repo

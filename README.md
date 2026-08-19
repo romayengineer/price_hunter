@@ -35,10 +35,33 @@ cargo run
 
 # Optionally start on a specific page.
 cargo run -- https://example.com
+
+# Automatically scrape a listing page to completion (scroll+click load-more,
+# infinite scroll, or ?page=N — see below), then persist the products.
+cargo run -- -auto-scrape https://example.com/perfumeria
+
+# Same, headless (no visible window).
+cargo run -- -auto-scrape https://example.com/perfumeria -headless
 ```
 
 If navigation fails, the session stays open — just type the address in the
 browser yourself.
+
+### Auto-scrape strategies
+
+Sites reveal more products differently; the `AutoScraper` trait abstracts each
+mechanism and the loop stops once the detected product count stops increasing:
+
+- **scroll-and-click** (default): scrolls down and clicks a load-more button.
+  Pass `-button <css-selector>` for the exact button, or let it guess from
+  common classes/aria/text.
+- **infinite scroll**: `-strategy infinite` scrolls to the bottom repeatedly
+  (no button) until the count stops growing.
+- **page parameter**: `-strategy page` navigates `?page=N` (override the param
+  with `-page-param <name>`) until a page has no grid.
+
+Known hosts pick a sensible default automatically (e.g. parfumerie.com.ar →
+infinite scroll); `-strategy` overrides. Add `-headless` for a hidden browser.
 
 ### Examples
 
@@ -46,6 +69,8 @@ browser yourself.
 cargo run -- https://www.compreahora.com.ar/categoria/perfumeria
 cargo run -- https://perfumeriasfabilu.com.ar/categoria/perfumeria
 cargo run -- https://www.beauty24.com.ar/perfumes-y-fragancias
+cargo run -- -auto-scrape https://www.parfumerie.com.ar/fragancias
+cargo run -- -auto-scrape https://www.parfumerie.com.ar/fragancias -headless
 ```
 
 ## Output
@@ -123,6 +148,7 @@ compreahora/parfumerie, a logged-in browser session in `profiles/chrome`):
 cargo test --test live compreahora -- --ignored
 cargo test --test live beauty24 -- --ignored
 cargo test --test live fabilu -- --ignored
+cargo test --test live autoscrape -- --ignored
 ```
 
 The store live test requires a running PocketBase with the collections created

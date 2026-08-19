@@ -2,6 +2,7 @@
 //! port and the external I/O boundaries (browser, files, HTTP server, config).
 //! Everything here depends on the domain; nothing in `domain` depends on it.
 
+pub mod autoscrape;
 pub mod browser;
 pub mod capture;
 pub mod config;

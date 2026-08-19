@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 
-use crate::domain::model::{Matrix, ProductRow};
+use crate::domain::model::{BrandRow, Matrix, ProductRow};
 
 /// Serializes the matrix as CSV with the same table structure as
 /// `GET /matrix`: one column per provider (header = domain), one row per
@@ -66,6 +66,27 @@ pub fn products_to_csv(products: &[ProductRow]) -> Result<String> {
     Ok(csv)
 }
 
+/// Serializes the canonical brands as CSV with a single `brand` column, one
+/// row per brand sorted by name. A UTF-8 BOM is prepended so Excel detects
+/// the encoding.
+pub fn brands_to_csv(brands: &[BrandRow]) -> Result<String> {
+    let mut order: Vec<usize> = (0..brands.len()).collect();
+    order.sort_by(|&a, &b| brands[a].name.to_lowercase().cmp(&brands[b].name.to_lowercase()));
+    let mut writer = csv::Writer::from_writer(Vec::new());
+    writer.write_record(["brand"])?;
+    for i in order {
+        writer.write_record([brands[i].name.as_str()])?;
+    }
+    writer.flush()?;
+    let bytes = writer
+        .into_inner()
+        .map_err(|e| anyhow::anyhow!("could not finalize CSV export: {e}"))?;
+    let mut csv = String::from_utf8(bytes)
+        .map_err(|e| anyhow::anyhow!("CSV export is not valid UTF-8: {e}"))?;
+    csv.insert(0, '\u{feff}');
+    Ok(csv)
+}
+
 #[cfg(test)]
 #[allow(clippy::cognitive_complexity)]
 mod tests {
@@ -73,6 +94,24 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::domain::model::{MatrixProvider, MatrixRow};
+
+    #[test]
+    fn brands_to_csv_writes_single_brand_column_sorted() {
+        let brands = vec![
+            BrandRow {
+                id: "b2".to_string(),
+                name: "zeta".to_string(),
+            },
+            BrandRow {
+                id: "b1".to_string(),
+                name: "Alfa".to_string(),
+            },
+        ];
+        let csv = brands_to_csv(&brands).unwrap();
+        assert!(csv.starts_with('\u{feff}'));
+        let body = csv.trim_start_matches('\u{feff}');
+        assert_eq!(body, "brand\nAlfa\nzeta\n");
+    }
 
     #[test]
     fn products_to_csv_writes_brand_product_name_and_size_sorted() {

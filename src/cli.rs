@@ -31,6 +31,8 @@ pub enum Command {
     ExportMatrix(PathBuf),
     /// `-export-products <csv>`
     ExportProducts(PathBuf),
+    /// `-export-brands <csv>`
+    ExportBrands(PathBuf),
     /// `-match-products`
     MatchProducts,
     /// `-link-matches`
@@ -65,6 +67,9 @@ pub fn parse(args: &[String]) -> Command {
     }
     if let Some(path) = arg_after(rest, "-export-products") {
         return Command::ExportProducts(path);
+    }
+    if let Some(path) = arg_after(rest, "-export-brands") {
+        return Command::ExportBrands(path);
     }
     if rest.iter().any(|a| a == "-match-products") {
         return Command::MatchProducts;
@@ -111,6 +116,7 @@ pub async fn run(command: Command, yes: bool) -> anyhow::Result<()> {
         Command::ImportBrands(path) => import_brands(&path),
         Command::ExportMatrix(path) => export_matrix(&path),
         Command::ExportProducts(path) => export_products(&path),
+        Command::ExportBrands(path) => export_brands(&path),
         Command::MatchProducts => match_products(),
         Command::LinkMatches => link_matches(),
         Command::MatchBrands => match_brands(),
@@ -236,6 +242,17 @@ fn export_products(path: &PathBuf) -> anyhow::Result<()> {
     let csv = export::products_to_csv(&products)?;
     std::fs::write(path, csv).with_context(|| format!("could not write CSV to {path:?}"))?;
     println!("Exported {} products to {}", products.len(), path.display());
+    Ok(())
+}
+
+/// Writes the canonical brands (single `brand` column) to a CSV file and
+/// exits without opening a browser.
+fn export_brands(path: &PathBuf) -> anyhow::Result<()> {
+    let store = connect()?;
+    let brands = store.list_brands()?;
+    let csv = export::brands_to_csv(&brands)?;
+    std::fs::write(path, csv).with_context(|| format!("could not write CSV to {path:?}"))?;
+    println!("Exported {} brands to {}", brands.len(), path.display());
     Ok(())
 }
 
@@ -590,6 +607,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn import_flags_take_the_following_value() {
         assert_eq!(
             parse(&args(&["-import-products", "products.csv"])),
@@ -606,6 +624,10 @@ mod tests {
         assert_eq!(
             parse(&args(&["-export-products", "products.csv"])),
             Command::ExportProducts(PathBuf::from("products.csv"))
+        );
+        assert_eq!(
+            parse(&args(&["-export-brands", "brands.csv"])),
+            Command::ExportBrands(PathBuf::from("brands.csv"))
         );
     }
 

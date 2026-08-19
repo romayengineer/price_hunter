@@ -238,6 +238,9 @@ password = "change-me"          # required; first run writes a commented templat
   sorted by display name, UTF-8 BOM for Excel). Exports every product
   including inactive ones. Note: the header row means the file is not a
   drop-in `-import-products` input (the importer does not skip headers).
+- `cargo run -- -export-brands <file.csv>` writes the canonical `brand` table
+  to a CSV with a single `brand` column (one row per brand, sorted by name,
+  UTF-8 BOM for Excel). Exports every brand.
 
 ## UI
 - A Flutter (macOS) app lives in the sibling repo

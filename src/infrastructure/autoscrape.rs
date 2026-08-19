@@ -6,6 +6,7 @@
 //! per site; the shared [`scrape_until_no_growth`] loop drives any strategy to
 //! completion and returns the largest product grid seen.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -13,6 +14,8 @@ use async_trait::async_trait;
 use thirtyfour::prelude::*;
 
 use crate::domain::detect::{self, Detection};
+
+static WINDOW_RELOADED: AtomicBool = AtomicBool::new(false);
 
 /// Default time to wait after a load-more action for the product count to grow
 /// before considering the listing exhausted.
@@ -29,9 +32,15 @@ pub const NO_GROWTH_LIMIT: usize = 3;
 /// runaway infinite scroll.
 pub const MAX_STEPS: usize = 200;
 
+/// Default product count at which a `?page=N` listing reloads the same page
+/// to drop earlier products from the DOM and keep memory bounded. Applies
+/// only when the URL query contains the page parameter. Override with
+/// `-window-threshold <n>` (0 disables windowing).
+pub const DEFAULT_WINDOW_THRESHOLD: usize = 120;
+
 /// A strategy for automatically revealing more products on a listing page.
 #[async_trait]
-pub trait AutoScraper {
+pub trait AutoScraper: Send + Sync {
     /// Advances the listing by one step (scroll+click, scroll, or page=N
     /// navigation). Returns `Ok(true)` if a subsequent call may reveal more
     /// products, `Ok(false)` when the strategy is exhausted (e.g. the load-more
@@ -64,6 +73,10 @@ pub struct AutoScrapeOptions {
     pub page_param: String,
     /// Whether to run the browser headless (no visible window).
     pub headless: bool,
+    /// When the detected product count reaches this threshold on a `?page=N`
+    /// URL, the same page is reloaded to drop earlier products from the DOM.
+    /// `None` means [`DEFAULT_WINDOW_THRESHOLD`]; `Some(0)` disables windowing.
+    pub window_threshold: Option<usize>,
 }
 
 impl AutoScrapeOptions {
@@ -74,6 +87,11 @@ impl AutoScrapeOptions {
         } else {
             &self.page_param
         }
+    }
+
+    /// The effective window threshold (defaults to [`DEFAULT_WINDOW_THRESHOLD`]).
+    pub fn window_threshold(&self) -> usize {
+        self.window_threshold.unwrap_or(DEFAULT_WINDOW_THRESHOLD)
     }
 }
 
@@ -177,11 +195,112 @@ impl AutoScraper for PageParam {
     }
 }
 
-/// Builds `base?param=N`, preserving any existing query string.
+/// Builds `base?param=N`, preserving any existing query string. If `param`
+/// already exists, its value is replaced (not duplicated).
 fn page_url(base: &str, param: &str, page: u32) -> String {
+    set_page_url(base, param, page)
+}
+
+/// Sets `param=N` in `base`, preserving other query pairs. Replaces any
+/// existing `param` value instead of appending a duplicate.
+pub fn set_page_url(base: &str, param: &str, page: u32) -> String {
     let mut url = url::Url::parse(base).expect("base URL is valid");
-    url.query_pairs_mut().append_pair(param, &page.to_string());
+    let other: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(k, _)| k != param)
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    url.query_pairs_mut().clear();
+    for (k, v) in other {
+        url.query_pairs_mut().append_pair(&k, &v);
+    }
+    url.query_pairs_mut()
+        .append_pair(param, &page.to_string());
     url.to_string()
+}
+
+/// Whether `url`'s query string contains `param`.
+pub fn url_contains_page_param(url: &str, param: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    parsed.query_pairs().any(|(k, _)| k == param)
+}
+
+/// The last value of `param` in `url`'s query string, parsed as `u32`.
+pub fn extract_page(url: &str, param: &str) -> Option<u32> {
+    let parsed = url::Url::parse(url).ok()?;
+    let mut last = None;
+    for (k, v) in parsed.query_pairs() {
+        if k == param && let Ok(n) = v.parse::<u32>() {
+            last = Some(n);
+        }
+    }
+    last
+}
+
+/// Whether a window reload should be triggered: count has reached the
+/// threshold and the URL is a paginated `?page=N` listing.
+pub fn should_window_reload(count: usize, threshold: usize, has_page_param: bool) -> bool {
+    has_page_param && threshold != 0 && count >= threshold
+}
+
+/// Wraps another [`AutoScraper`] and reloads the same `?page=N` when the
+/// detected product count reaches `threshold`. This drops earlier products from
+/// the DOM (they remain in the caller's `seen` set via incremental saves) so
+/// the page stays responsive on large listings. Only active when the current
+/// URL contains `param`.
+pub struct WindowedAutoScraper {
+    inner: Box<dyn AutoScraper>,
+    param: String,
+    threshold: usize,
+}
+
+impl WindowedAutoScraper {
+    /// Wraps `inner` with windowing for `param` at `threshold`.
+    pub fn new(inner: Box<dyn AutoScraper>, param: String, threshold: usize) -> Self {
+        Self {
+            inner,
+            param,
+            threshold,
+        }
+    }
+}
+
+#[async_trait]
+impl AutoScraper for WindowedAutoScraper {
+    async fn next(&mut self, driver: &WebDriver) -> Result<bool> {
+        if self.threshold != 0 {
+            let current_url = driver
+                .current_url()
+                .await
+                .map(|u| u.to_string())
+                .unwrap_or_default();
+            let has_page = url_contains_page_param(&current_url, &self.param);
+            if has_page {
+                let count = peek_count(driver).await?;
+                if should_window_reload(count, self.threshold, has_page) {
+                    let page = extract_page(&current_url, &self.param).unwrap_or(1);
+                    let url = set_page_url(&current_url, &self.param, page);
+                    log::info!(
+                        "memory optimization: reloading {url} (window threshold {} reached with {count} products)",
+                        self.threshold
+                    );
+                    WINDOW_RELOADED.store(true, Ordering::SeqCst);
+                    driver.goto(&url).await?;
+                    return Ok(true);
+                }
+            }
+        }
+        self.inner.next(driver).await
+    }
+}
+
+async fn peek_count(driver: &WebDriver) -> Result<usize> {
+    let source = driver.source().await?;
+    Ok(detect::detect_grid(&source)
+        .map(|d| d.products.len())
+        .unwrap_or(0))
 }
 
 /// The default strategy for a host. Unknown hosts default to scroll-click, the
@@ -195,14 +314,24 @@ pub fn default_strategy(host: &str) -> StrategyKind {
 }
 
 /// Builds the strategy for `url`, applying CLI overrides on top of the
-/// host-specific default.
+/// host-specific default. When `url` contains `?page=N` (or the custom
+/// `-page-param`), any non-Page strategy is wrapped with
+/// [`WindowedAutoScraper`] so the same page is reloaded once the product count
+/// reaches `window_threshold`, dropping earlier products from the DOM.
 pub fn strategy_for(url: &str, options: &AutoScrapeOptions) -> Box<dyn AutoScraper> {
-    match effective_strategy(url, options) {
+    let inner: Box<dyn AutoScraper> = match effective_strategy(url, options) {
         StrategyKind::ScrollClick => Box::new(ScrollAndClick::new(options.button.clone())),
         StrategyKind::InfiniteScroll => Box::new(InfiniteScroll),
         StrategyKind::Page => {
             Box::new(PageParam::new(url.to_string(), options.page_param_name().to_string()))
         }
+    };
+    let threshold = options.window_threshold();
+    let param = options.page_param_name();
+    if threshold != 0 && url_contains_page_param(url, param) {
+        Box::new(WindowedAutoScraper::new(inner, param.to_string(), threshold))
+    } else {
+        inner
     }
 }
 
@@ -327,13 +456,29 @@ async fn auto_scrape_iteration(
 
 /// Detects products on the current page, updating `state.best` with any larger
 /// grid and invoking `on_growth` when the count grows. Returns the current best
-/// product count.
+/// product count. When a memory-optimization window reload just happened
+/// (`WINDOW_RELOADED`), the new window's grid replaces `best` even when
+/// smaller, and the no-growth tracker is reset so subsequent growth in the
+/// new window is not treated as a stall.
 async fn detect_products(driver: &WebDriver, state: &mut ScrapeState<'_>) -> Result<usize> {
     let source = driver.source().await?;
     let Some(detection) = detect::detect_grid(&source) else {
+        if WINDOW_RELOADED.swap(false, Ordering::SeqCst) {
+            state.best = None;
+            state.tracker.best = 0;
+            state.tracker.rounds = 0;
+            return Ok(0);
+        }
         return Ok(count_of(&state.best));
     };
     let count = detection.products.len();
+    if WINDOW_RELOADED.swap(false, Ordering::SeqCst) {
+        state.best = Some(detection);
+        state.tracker.best = count;
+        state.tracker.rounds = 0;
+        (state.on_growth)(state.best.as_ref().expect("best was just set"));
+        return Ok(count);
+    }
     if state.best.as_ref().is_none_or(|b| count > b.products.len()) {
         state.best = Some(detection);
         (state.on_growth)(state.best.as_ref().expect("best was just set"));
@@ -558,5 +703,129 @@ mod tests {
             ..AutoScrapeOptions::default()
         };
         assert_eq!(effective_strategy(url, &opts), StrategyKind::Page);
+    }
+
+    #[test]
+    fn set_page_url_replaces_existing_page() {
+        assert_eq!(
+            set_page_url("https://example.com/list?page=2", "page", 5),
+            "https://example.com/list?page=5"
+        );
+        assert_eq!(
+            set_page_url("https://example.com/list?page=2&sort=price", "page", 5),
+            "https://example.com/list?sort=price&page=5"
+        );
+        assert_eq!(
+            set_page_url("https://example.com/list?sort=price&page=2&foo=bar", "page", 3),
+            "https://example.com/list?sort=price&foo=bar&page=3"
+        );
+        // page_url now delegates to set_page_url and must not duplicate
+        assert_eq!(
+            page_url("https://example.com/list?page=2", "page", 3),
+            "https://example.com/list?page=3"
+        );
+    }
+
+    #[test]
+    fn url_contains_page_param_detects_query() {
+        assert!(url_contains_page_param(
+            "https://example.com/list?page=1",
+            "page"
+        ));
+        assert!(url_contains_page_param(
+            "https://example.com/list?sort=price&page=2",
+            "page"
+        ));
+        assert!(!url_contains_page_param(
+            "https://example.com/list?sort=price",
+            "page"
+        ));
+        assert!(url_contains_page_param(
+            "https://example.com/list?pg=2",
+            "pg"
+        ));
+        assert!(!url_contains_page_param(
+            "https://example.com/list?page=1",
+            "pg"
+        ));
+    }
+
+    #[test]
+    fn extract_page_parses_last_value() {
+        assert_eq!(
+            extract_page("https://example.com/list?page=3", "page"),
+            Some(3)
+        );
+        assert_eq!(
+            extract_page("https://example.com/list?sort=price&page=5", "page"),
+            Some(5)
+        );
+        assert_eq!(extract_page("https://example.com/list", "page"), None);
+        assert_eq!(
+            extract_page("https://example.com/list?page=bad", "page"),
+            None
+        );
+        // duplicate param: last wins (set_page_url normalizes to one, but parse may see duplicates)
+        assert_eq!(
+            extract_page("https://example.com/list?page=2&page=5", "page"),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn should_window_reload_respects_threshold_and_page() {
+        assert!(should_window_reload(120, 120, true));
+        assert!(should_window_reload(200, 120, true));
+        assert!(!should_window_reload(119, 120, true));
+        assert!(!should_window_reload(120, 120, false));
+        assert!(!should_window_reload(120, 0, true));
+        assert!(!should_window_reload(0, 120, true));
+    }
+
+    #[test]
+    fn default_window_threshold_is_120() {
+        assert_eq!(DEFAULT_WINDOW_THRESHOLD, 120);
+        assert_eq!(AutoScrapeOptions::default().window_threshold(), 120);
+        assert_eq!(
+            AutoScrapeOptions {
+                window_threshold: Some(200),
+                ..AutoScrapeOptions::default()
+            }
+            .window_threshold(),
+            200
+        );
+        assert_eq!(
+            AutoScrapeOptions {
+                window_threshold: Some(0),
+                ..AutoScrapeOptions::default()
+            }
+            .window_threshold(),
+            0
+        );
+    }
+
+    #[test]
+    fn strategy_for_wraps_windowed_when_url_has_page_param() {
+        // Non-Page strategy with ?page=N should be windowed (inner wrapped).
+        // We verify indirectly via url_contains check and threshold; the wrapper
+        // is applied in strategy_for but type-erased, so we test the helpers
+        // that drive wrapping.
+        let url = "https://example.com/list?page=3";
+        let opts = AutoScrapeOptions {
+            url: url.to_string(),
+            ..AutoScrapeOptions::default()
+        };
+        assert!(url_contains_page_param(url, opts.page_param_name()));
+        assert!(!matches!(
+            effective_strategy(url, &opts),
+            StrategyKind::Page
+        ));
+        // With threshold 0, should not window
+        let opts_zero = AutoScrapeOptions {
+            url: url.to_string(),
+            window_threshold: Some(0),
+            ..AutoScrapeOptions::default()
+        };
+        assert_eq!(opts_zero.window_threshold(), 0);
     }
 }

@@ -48,7 +48,7 @@ pub enum Command {
     ImportUnmatched,
     /// `-matrix-server`
     MatrixServer,
-    /// `-auto-scrape <url> [-strategy <name>] [-button <css>] [-page-param <name>] [-headless]`
+    /// `-auto-scrape <url> [-strategy <name>] [-button <css>] [-page-param <name>] [-window-threshold <n>] [-headless]`
     AutoScrape(AutoScrapeOptions),
     /// Default: open a browser, optionally at a URL, and poll for captures.
     Browse(Option<String>),
@@ -102,7 +102,7 @@ pub fn parse(args: &[String]) -> Command {
 }
 
 /// Collects the `-auto-scrape` modifier flags (`-strategy`, `-button`,
-/// `-page-param`, `-headless`) into [`AutoScrapeOptions`] for `url`.
+/// `-page-param`, `-window-threshold`, `-headless`) into [`AutoScrapeOptions`] for `url`.
 #[allow(clippy::cognitive_complexity)]
 fn parse_auto_scrape(rest: &[String], url: String) -> AutoScrapeOptions {
     let strategy = arg_after_string(rest, "-strategy").map(|s| match s.to_ascii_lowercase().as_str() {
@@ -113,6 +113,9 @@ fn parse_auto_scrape(rest: &[String], url: String) -> AutoScrapeOptions {
     });
     let button = arg_after_string(rest, "-button");
     let page_param = arg_after_string(rest, "-page-param").unwrap_or_default();
+    let window_threshold = arg_after_string(rest, "-window-threshold")
+        .or_else(|| arg_after_string(rest, "-window"))
+        .and_then(|s| s.parse::<usize>().ok());
     let headless = rest.iter().any(|a| a == "-headless");
     AutoScrapeOptions {
         url,
@@ -120,6 +123,7 @@ fn parse_auto_scrape(rest: &[String], url: String) -> AutoScrapeOptions {
         button,
         page_param,
         headless,
+        window_threshold,
     }
 }
 
@@ -831,6 +835,7 @@ mod tests {
                 button: None,
                 page_param: String::new(),
                 headless: false,
+                window_threshold: None,
             })
         );
         assert_eq!(
@@ -851,6 +856,7 @@ mod tests {
                 button: Some(".load-more".to_string()),
                 page_param: "pg".to_string(),
                 headless: true,
+                window_threshold: None,
             })
         );
         assert_eq!(
@@ -861,6 +867,78 @@ mod tests {
                 button: None,
                 page_param: String::new(),
                 headless: false,
+                window_threshold: None,
+            })
+        );
+    }
+
+    #[test]
+    fn auto_scrape_window_threshold_parses_and_defaults() {
+        assert_eq!(
+            parse(&args(&[
+                "-auto-scrape",
+                "https://example.com/list?page=1",
+                "-window-threshold",
+                "200"
+            ])),
+            Command::AutoScrape(AutoScrapeOptions {
+                url: "https://example.com/list?page=1".to_string(),
+                strategy: None,
+                button: None,
+                page_param: String::new(),
+                headless: false,
+                window_threshold: Some(200),
+            })
+        );
+        // alias -window
+        assert_eq!(
+            parse(&args(&[
+                "-auto-scrape",
+                "https://example.com/list?page=1",
+                "-window",
+                "50"
+            ])),
+            Command::AutoScrape(AutoScrapeOptions {
+                url: "https://example.com/list?page=1".to_string(),
+                strategy: None,
+                button: None,
+                page_param: String::new(),
+                headless: false,
+                window_threshold: Some(50),
+            })
+        );
+        // 0 disables
+        assert_eq!(
+            parse(&args(&[
+                "-auto-scrape",
+                "https://example.com/list?page=1",
+                "-window-threshold",
+                "0"
+            ])),
+            Command::AutoScrape(AutoScrapeOptions {
+                url: "https://example.com/list?page=1".to_string(),
+                strategy: None,
+                button: None,
+                page_param: String::new(),
+                headless: false,
+                window_threshold: Some(0),
+            })
+        );
+        // invalid value is ignored (fallback to None => default 120)
+        assert_eq!(
+            parse(&args(&[
+                "-auto-scrape",
+                "https://example.com/list?page=1",
+                "-window-threshold",
+                "bad"
+            ])),
+            Command::AutoScrape(AutoScrapeOptions {
+                url: "https://example.com/list?page=1".to_string(),
+                strategy: None,
+                button: None,
+                page_param: String::new(),
+                headless: false,
+                window_threshold: None,
             })
         );
     }

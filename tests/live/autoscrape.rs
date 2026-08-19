@@ -138,9 +138,109 @@ fn parse_best_count(line: &str) -> Option<usize> {
     number.parse::<usize>().ok()
 }
 
+/// Extracts the page number from a `memory optimization: reloading ...?page=N ...`
+/// log line, if present.
+fn parse_page_from_reload(line: &str) -> Option<u32> {
+    let marker = "memory optimization: reloading";
+    let idx = line.find(marker)?;
+    let rest = &line[idx..];
+    // Match both "?page=" (first param) and "&page=" (subsequent param)
+    let page_idx = rest.find("?page=").or_else(|| rest.find("&page="))?;
+    let after = &rest[page_idx + 6..]; // len("?page=") == len("&page/") == 6
+    let number: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    number.parse::<u32>().ok()
+}
+
+/// Reads the spawned process's stderr until it exits or `timeout` elapses,
+/// returning `(max_product_count, max_page_reached, window_reload_fired)`.
+///
+/// - `max_product_count` is the largest `best = N` count seen.
+/// - `max_page_reached` is the highest page number from reload messages.
+/// - `window_reload_fired` is true when at least one reload message appeared.
+fn collect_window_stats(child: &mut Child, timeout: Duration) -> (usize, u32, bool) {
+    let stderr = child.stderr.take().expect("stderr not captured");
+    let deadline = std::time::Instant::now() + timeout;
+    let mut max_count = 0usize;
+    let mut max_page = 0u32;
+    let mut has_reload = false;
+
+    let mut reader = BufReader::new(stderr);
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        match reader.read_until(b'\n', &mut buffer) {
+            Ok(0) => break,
+            Ok(_) => {
+                let line = String::from_utf8_lossy(&buffer);
+                if let Some(count) = parse_best_count(&line) {
+                    max_count = max_count.max(count);
+                }
+                if let Some(page) = parse_page_from_reload(&line) {
+                    has_reload = true;
+                    max_page = max_page.max(page);
+                }
+            }
+            Err(_) => break,
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+    }
+    (max_count, max_page, has_reload)
+}
+
+/// Runs the `pricehunter` binary against perfumeriasrouge with `-strategy page`
+/// and `-window-threshold 100` to verify the memory-optimization windowing
+/// feature. Asserts that:
+///
+/// 1. Page 50 is reached (the site has 50 pages).
+/// 2. At least one window reload fires (the feature activates).
+#[test]
+#[ignore = "requires network and a browser session"]
+fn windowed_auto_scrape_reaches_page_50() {
+    let bin = env!("CARGO_BIN_EXE_pricehunter");
+    let mut child = Command::new(bin)
+        .args([
+            "-auto-scrape",
+            PERFUMERIASROUGE_URL,
+            "-strategy",
+            "page",
+            "-page-param",
+            "page",
+            "-window-threshold",
+            "100",
+            "-headless",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn pricehunter");
+
+    let (max_count, max_page, has_reload) =
+        collect_window_stats(&mut child, Duration::from_secs(600));
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(
+        max_page >= 50,
+        "expected to reach page 50, got page {max_page} (max products: {max_count}, \
+         window reload fired: {has_reload})"
+    );
+    assert!(
+        has_reload,
+        "window reload never fired — the memory-optimization feature did not activate \
+         (max page: {max_page}, max products: {max_count})"
+    );
+    println!(
+        "windowed auto-scrape passed: reached page {max_page} with {max_count} products, \
+         window reload fired"
+    );
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_best_count;
+    use super::{parse_best_count, parse_page_from_reload};
 
     #[test]
     fn parses_best_count_from_log_line() {
@@ -159,5 +259,34 @@ mod tests {
         assert_eq!(parse_best_count("Navigating to https://example.com"), None);
         assert_eq!(parse_best_count("auto-scrape step 1: no best marker"), None);
         assert_eq!(parse_best_count(""), None);
+    }
+
+    #[test]
+    fn parses_page_from_reload_log_line() {
+        assert_eq!(
+            parse_page_from_reload(
+                "memory optimization: reloading https://www.perfumeriasrouge.com/perfumes-y-fragancias?page=50 (window threshold 100 reached with 120 products)"
+            ),
+            Some(50)
+        );
+        assert_eq!(
+            parse_page_from_reload(
+                "memory optimization: reloading https://example.com/list?sort=price&page=12 (window threshold 100 reached with 105 products)"
+            ),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn ignores_unrelated_reload_lines() {
+        assert_eq!(
+            parse_page_from_reload("auto-scrape step 3: best = 60 products"),
+            None
+        );
+        assert_eq!(
+            parse_page_from_reload("Navigating to https://example.com"),
+            None
+        );
+        assert_eq!(parse_page_from_reload(""), None);
     }
 }

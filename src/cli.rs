@@ -516,26 +516,39 @@ async fn auto_scrape_with_driver(
         strategy_kind_name(autoscrape::effective_strategy(url, options))
     );
 
-    let mut last_count = 0usize;
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let detection = autoscrape::scrape_until_no_growth(
         driver,
         strategy.as_mut(),
         autoscrape::SETTLE,
         autoscrape::MAX_STEPS,
         |detection| {
-            if detection.products.len() <= last_count {
+            let new_products: Vec<Product> = detection
+                .products
+                .iter()
+                .filter(|p| seen.insert(p.name.clone()))
+                .cloned()
+                .collect();
+            if new_products.is_empty() {
                 return;
             }
-            last_count = detection.products.len();
-            persist_detection(store, url, detection);
+            persist_new_products(store, url, detection.products.len(), &new_products);
         },
     )
     .await?;
 
-    // Persist the final detection too, so the last batch is never missed even
-    // if the loop ended without a growth callback (e.g. strategy exhaustion).
+    // Persist any products seen in the final detection that weren't saved by a
+    // growth callback (e.g. strategy exhaustion before a growth).
     if let Some(detection) = &detection {
-        persist_detection(store, url, detection);
+        let new_products: Vec<Product> = detection
+            .products
+            .iter()
+            .filter(|p| seen.insert(p.name.clone()))
+            .cloned()
+            .collect();
+        if !new_products.is_empty() {
+            persist_new_products(store, url, detection.products.len(), &new_products);
+        }
     }
     println!(
         "Scraped {} products from {url}",
@@ -549,10 +562,24 @@ fn count_of(detection: &Option<Detection>) -> usize {
     detection.as_ref().map_or(0, |d| d.products.len())
 }
 
-/// Writes a JSON capture for `detection` and persists it to PocketBase. A
-/// failed write/save is logged, never fatal — the scrape continues.
-fn persist_detection(store: &Store, url: &str, detection: &Detection) {
-    let path = match capture::write_capture("captures", url, detection) {
+/// Writes a JSON capture for the newly seen products and persists them to
+/// PocketBase (recording the full `total_count` on the scrape row). A failed
+/// write/save is logged, never fatal — the scrape continues.
+fn persist_new_products(
+    store: &Store,
+    url: &str,
+    total_count: usize,
+    new_products: &[Product],
+) {
+    let detection = Detection {
+        container: price_hunter::detect::Container {
+            classes: Vec::new(),
+            id: None,
+            child_count: new_products.len(),
+        },
+        products: new_products.to_vec(),
+    };
+    let path = match capture::write_capture("captures", url, &detection) {
         Ok(path) => path,
         Err(e) => {
             log::error!("Could not write capture for {url}: {e}");
@@ -563,10 +590,16 @@ fn persist_detection(store: &Store, url: &str, detection: &Detection) {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    match store.save(url, now, &path.display().to_string(), detection) {
+    match store.save_incremental(
+        url,
+        now,
+        &path.display().to_string(),
+        total_count,
+        new_products,
+    ) {
         Ok(()) => println!(
-            "Persisted {} products to {}",
-            detection.products.len(),
+            "Persisted {} new products to {}",
+            new_products.len(),
             path.display()
         ),
         Err(e) => log::error!("Could not persist capture to the store: {e}"),

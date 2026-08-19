@@ -1,4 +1,7 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
 
 use crate::domain::detect::{Detection, Product};
 use crate::domain::model::{ProviderProductRow, ProviderRow};
@@ -9,17 +12,27 @@ use super::error::Error;
 use super::http::{escape_filter, host_of};
 use super::types::{
     PROVIDER_PRODUCT_IMAGES_COLLECTION, PROVIDER_PRODUCT_PRICES_COLLECTION,
-    PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION, PriceRow, ProductImagePayload,
+    PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION, ProductImagePayload,
     ProductImageRow, ProviderPayload, ProviderPricePayload, ProviderProductPayload,
     SCRAPES_COLLECTION, ScrapePayload, ScrapeRow,
 };
 
+/// Generic page shape for a pooled list request.
+#[derive(serde::Deserialize)]
+struct Page<T> {
+    items: Vec<T>,
+}
+
 impl Store {
     /// Persists one detection through the Record API:
     /// one `scrapes` record, then per detected product one `provider_products`
-    /// (upserted by `(provider_id, provider_product_url)`), a
+    /// (upserted by `(provider_id, name)` / `provider_product_url`), a
     /// `provider_product_prices` record only when the price changed, and its
     /// `provider_product_images` rows.
+    ///
+    /// All HTTP goes through the pooled agent so a capture with many products
+    /// reuses one TCP connection instead of opening a fresh one per request
+    /// (the SDK's one-shot client would exhaust macOS ephemeral ports).
     pub fn save(
         &self,
         url: &str,
@@ -31,8 +44,23 @@ impl Store {
         Ok(())
     }
 
-    /// The `anyhow`-typed body behind [`Store::save`], kept separate so the
-    /// public entry point can surface a typed [`Error`].
+    /// Persists only `products` (assumed new — the caller has already seen the
+    /// rest) under a scrape row that records `total_product_count`. Used by the
+    /// auto-scrape loop to save each newly detected batch without re-processing
+    /// products saved on an earlier step.
+    pub fn save_incremental(
+        &self,
+        url: &str,
+        captured_at: u64,
+        capture_path: &str,
+        total_product_count: usize,
+        products: &[Product],
+    ) -> Result<(), Error> {
+        self.save_incremental_inner(url, captured_at, capture_path, total_product_count, products)?;
+        Ok(())
+    }
+
+    /// The `anyhow`-typed body behind [`Store::save`].
     fn save_inner(
         &self,
         url: &str,
@@ -42,65 +70,58 @@ impl Store {
     ) -> Result<()> {
         let host = host_of(url);
         let provider = self.ensure_provider(&host)?;
-        let scrape = self.create_scrape(url, captured_at, capture_path, &provider.id, detection)?;
-        for product in &detection.products {
-            // A single bad product must not drop the rest of the capture: log
-            // and move on so the other products still land (the scrape row is
-            // already written).
-            if let Err(e) = self.save_product(&provider, &scrape.id, product) {
-                log::error!("could not persist product {:?}: {e:#}", product.name);
-            }
-        }
+        let container_class = detection
+            .container
+            .classes
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        let scrape =
+            self.create_scrape(url, captured_at, capture_path, &provider.id, detection.products.len(), &container_class)?;
+        self.save_products(&provider, &scrape.id, &detection.products)?;
         Ok(())
     }
 
-    /// Persists one detected product: the `provider_products` row, its price
-    /// (only when changed) and its images.
-    fn save_product(
+    /// The `anyhow`-typed body behind [`Store::save_incremental`].
+    fn save_incremental_inner(
         &self,
-        provider: &ProviderRow,
-        scrape_id: &str,
-        product: &Product,
+        url: &str,
+        captured_at: u64,
+        capture_path: &str,
+        total_product_count: usize,
+        products: &[Product],
     ) -> Result<()> {
-        let provider_product = self.ensure_provider_product(
-            provider,
-            product.url.as_deref().unwrap_or(""),
-            &product.name,
+        let host = host_of(url);
+        let provider = self.ensure_provider(&host)?;
+        let scrape = self.create_scrape(
+            url,
+            captured_at,
+            capture_path,
+            &provider.id,
+            total_product_count,
+            "",
         )?;
-        let currency = product
-            .currency
-            .clone()
-            .or_else(|| provider.default_currency.clone())
-            .unwrap_or_default();
-        self.create_price(&provider_product.id, scrape_id, currency, product)?;
-        self.sync_images(&provider_product.id, &product.images)?;
+        self.save_products(&provider, &scrape.id, products)?;
         Ok(())
     }
 
     /// Returns the existing provider for `domain` or creates it (name = domain,
     /// enabled = true).
     fn ensure_provider(&self, domain: &str) -> Result<ProviderRow> {
-        let existing = self
-            .client
-            .records(PROVIDERS_COLLECTION)
-            .list()
-            .filter(&format!("domain='{}'", escape_filter(domain)))
-            .per_page(1)
-            .call::<ProviderRow>()
-            .context("could not look up provider")?;
-        if let Some(row) = existing.items.into_iter().next() {
+        let filter = format!("domain='{}'", escape_filter(domain));
+        let url = self.records_url(PROVIDERS_COLLECTION, Some(&filter), 1)?;
+        let page = self.agent_get_json::<Page<ProviderRow>>(&url)?;
+        if let Some(row) = page.items.into_iter().next() {
             return Ok(row);
         }
-        let created = self
-            .client
-            .records(PROVIDERS_COLLECTION)
-            .create(ProviderPayload {
+        let created = self.agent_post_json::<ProviderRow>(
+            &self.collection_url(PROVIDERS_COLLECTION),
+            &serde_json::to_string(&ProviderPayload {
                 domain: domain.to_string(),
                 name: domain.to_string(),
                 enabled: true,
-            })
-            .call()
-            .map_err(|e| anyhow::anyhow!("could not create provider: {e}"))?;
+            })?,
+        )?;
         Ok(ProviderRow {
             id: created.id,
             domain: domain.to_string(),
@@ -116,98 +137,122 @@ impl Store {
         captured_at: u64,
         capture_path: &str,
         provider_id: &str,
-        detection: &Detection,
+        product_count: usize,
+        container_class: &str,
     ) -> Result<ScrapeRow> {
-        let container_class = detection
-            .container
-            .classes
-            .first()
-            .cloned()
-            .unwrap_or_default();
-        self.client
-            .records(SCRAPES_COLLECTION)
-            .create(ScrapePayload {
+        let row = self.agent_post_json::<ScrapeRow>(
+            &self.collection_url(SCRAPES_COLLECTION),
+            &serde_json::to_string(&ScrapePayload {
                 provider_id: provider_id.to_string(),
                 url: url.to_string(),
                 scraped_at: iso8601(captured_at),
                 status: "success".to_string(),
                 capture_path: capture_path.to_string(),
-                product_count: detection.products.len(),
-                container_class,
-            })
-            .call()
-            .map_err(|e| anyhow::anyhow!("could not create scrape: {e}"))
-            .map(|r| ScrapeRow { id: r.id })
+                product_count,
+                container_class: container_class.to_string(),
+            })?,
+        )?;
+        Ok(ScrapeRow { id: row.id })
     }
 
-    /// Returns the provider product for `(provider_id, name)`, falling
-    /// back to the `(provider_id, provider_product_url)` match, creating it
-    /// (with `name` and `last_seen_at` set) when neither exists.
-    ///
-    /// `name` is unique per provider, so a name that shows up under a
-    /// new URL reuses the existing row instead of creating a duplicate.
-    fn ensure_provider_product(
+    /// Persists every product in `products` for `provider`: resolves each
+    /// `provider_products` row (reusing existing ones, creating new ones),
+    /// then writes its price and images. All HTTP is pooled.
+    fn save_products(
+        &self,
+        provider: &ProviderRow,
+        scrape_id: &str,
+        products: &[Product],
+    ) -> Result<()> {
+        let existing = self.list_provider_products(&provider.id)?;
+        let by_name: HashMap<&str, &ProviderProductRow> =
+            existing.iter().map(|r| (r.name.as_str(), r)).collect();
+        let mut new_ids: HashMap<String, String> = HashMap::new();
+
+        for product in products {
+            // A single bad product must not drop the rest of the capture: log
+            // and move on so the other products still land.
+            if let Err(e) = self.save_product(
+                provider,
+                scrape_id,
+                product,
+                &by_name,
+                &mut new_ids,
+            ) {
+                log::error!("could not persist product {:?}: {e:#}", product.name);
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolves the `provider_products` id for one product, creating the row
+    /// when neither `name` nor `provider_product_url` matches an existing one.
+    /// Newly created ids are recorded in `new_ids` (keyed by name) so a
+    /// duplicate name within one detection reuses the same row.
+    fn save_product(
+        &self,
+        provider: &ProviderRow,
+        scrape_id: &str,
+        product: &Product,
+        by_name: &HashMap<&str, &ProviderProductRow>,
+        new_ids: &mut HashMap<String, String>,
+    ) -> Result<()> {
+        let url = product.url.as_deref().unwrap_or("");
+        let existing_id = by_name.get(product.name.as_str()).map(|r| r.id.clone());
+        let is_new = existing_id.is_none() && !new_ids.contains_key(&product.name);
+        let provider_product_id = match existing_id {
+            Some(id) => id,
+            None => {
+                if let Some(id) = new_ids.get(&product.name) {
+                    id.clone()
+                } else {
+                    let id = self.create_provider_product(provider, url, &product.name)?;
+                    new_ids.insert(product.name.clone(), id.clone());
+                    id
+                }
+            }
+        };
+        let currency = product
+            .currency
+            .clone()
+            .or_else(|| provider.default_currency.clone())
+            .unwrap_or_default();
+        self.create_price(&provider_product_id, scrape_id, currency, product, is_new)?;
+        self.sync_images(&provider_product_id, &product.images)?;
+        Ok(())
+    }
+
+    /// Creates a `provider_products` row via the pooled agent and returns its id.
+    fn create_provider_product(
         &self,
         provider: &ProviderRow,
         provider_product_url: &str,
         name: &str,
-    ) -> Result<ProviderProductRow> {
-        if let Some(row) = self.find_provider_product(&provider.id, "name", name)? {
-            return Ok(row);
-        }
-        if let Some(row) =
-            self.find_provider_product(&provider.id, "provider_product_url", provider_product_url)?
-        {
-            return Ok(row);
-        }
-        let created = self
-            .client
-            .records(PROVIDER_PRODUCTS_COLLECTION)
-            .create(ProviderProductPayload {
+    ) -> Result<String> {
+        let row = self.agent_post_json::<ProviderProductRow>(
+            &self.collection_url(PROVIDER_PRODUCTS_COLLECTION),
+            &serde_json::to_string(&ProviderProductPayload {
                 provider_id: provider.id.clone(),
                 provider_product_url: provider_product_url.to_string(),
                 name: name.to_string(),
                 last_seen_at: iso8601(now_secs()),
-            })
-            .call()
-            .map_err(|e| anyhow::anyhow!("could not create provider product: {e}"))?;
-        Ok(ProviderProductRow {
-            id: created.id,
-            ..ProviderProductRow::default()
-        })
-    }
-
-    fn find_provider_product(
-        &self,
-        provider_id: &str,
-        field: &str,
-        value: &str,
-    ) -> Result<Option<ProviderProductRow>> {
-        let filter = format!(
-            "provider_id='{}' && {field}='{}'",
-            escape_filter(provider_id),
-            escape_filter(value)
-        );
-        let existing = self
-            .client
-            .records(PROVIDER_PRODUCTS_COLLECTION)
-            .list()
-            .filter(&filter)
-            .per_page(1)
-            .call::<ProviderProductRow>()
-            .context("could not look up provider product")?;
-        Ok(existing.items.into_iter().next())
+            })?,
+        )?;
+        Ok(row.id)
     }
 
     /// Inserts a price row only when it differs from the last recorded price
     /// for this provider product. The first observation is always recorded.
-    /// A row is written when `price` or `currency` changed.
+    /// A row is written when `price` or `currency` changed. For a brand-new
+    /// provider product (`is_new`) the price is written directly — there can be
+    /// no prior observation.
     fn create_price(
         &self,
         provider_product_id: &str,
         scrape_id: &str,
         currency: String,
         product: &Product,
+        is_new: bool,
     ) -> Result<()> {
         let payload = ProviderPricePayload {
             provider_product_id: provider_product_id.to_string(),
@@ -216,71 +261,62 @@ impl Store {
             currency: currency.clone(),
             price_text: product.price_text.clone(),
         };
-        // Idempotency for this scrape: a capture can contain the same
-        // provider product twice (same name/URL in one page). The unique
-        // `(provider_product_id, scrape_id)` index makes a second insert
-        // fail, so update the existing row instead.
-        let existing = self
-            .client
-            .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
-            .list()
-            .filter(&format!(
-                "provider_product_id='{}' && scrape_id='{}'",
-                escape_filter(provider_product_id),
-                escape_filter(scrape_id)
-            ))
-            .per_page(1)
-            .call::<PriceRow>()
-            .context("could not look up existing price")?;
-        if let Some(row) = existing.items.into_iter().next() {
-            return self
-                .client
-                .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
-                .update(&row.id, payload)
-                .call()
-                .map_err(|e| anyhow::anyhow!("could not update price: {e}"))
-                .map(|_| ());
+        if is_new {
+            self.agent_post_json::<serde_json::Value>(
+                &self.collection_url(PROVIDER_PRODUCT_PRICES_COLLECTION),
+                &serde_json::to_string(&payload)?,
+            )?;
+            return Ok(());
         }
-        let last = self
-            .client
-            .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
-            .list()
-            .filter(&format!(
-                "provider_product_id='{}'",
-                escape_filter(provider_product_id)
-            ))
-            .sort("-created")
-            .per_page(1)
-            .call::<PriceRow>()
-            .context("could not look up last price")?;
+        // Existing product: keep idempotency for this scrape and the
+        // "only when changed" rule.
+        let idempotency = format!(
+            "provider_product_id='{}' && scrape_id='{}'",
+            escape_filter(provider_product_id),
+            escape_filter(scrape_id)
+        );
+        let idem_url = self.records_url(
+            PROVIDER_PRODUCT_PRICES_COLLECTION,
+            Some(&idempotency),
+            1,
+        )?;
+        let existing = self.agent_get_json::<Page<super::types::PriceRow>>(&idem_url)?;
+        if let Some(row) = existing.items.into_iter().next() {
+            self.agent_patch_json::<serde_json::Value>(
+                &self.record_url(PROVIDER_PRODUCT_PRICES_COLLECTION, &row.id),
+                &serde_json::to_string(&payload)?,
+            )?;
+            return Ok(());
+        }
+        let last_url = self.records_url_sorted(
+            PROVIDER_PRODUCT_PRICES_COLLECTION,
+            &format!("provider_product_id='{}'", escape_filter(provider_product_id)),
+            "-created",
+            1,
+        )?;
+        let last = self.agent_get_json::<Page<super::types::PriceRow>>(&last_url)?;
         if matches!(
             last.items.into_iter().next(),
             Some(row) if row.price == product.price && row.currency == currency
         ) {
             return Ok(());
         }
-        self.client
-            .records(PROVIDER_PRODUCT_PRICES_COLLECTION)
-            .create(payload)
-            .call()
-            .map_err(|e| anyhow::anyhow!("could not create price: {e}"))
-            .map(|_| ())
+        self.agent_post_json::<serde_json::Value>(
+            &self.collection_url(PROVIDER_PRODUCT_PRICES_COLLECTION),
+            &serde_json::to_string(&payload)?,
+        )?;
+        Ok(())
     }
 
     /// Upserts the product images keyed by url and removes rows that are no
-    /// longer present. Position 0 is marked as the primary image.
+    /// longer present. Position 0 is marked as the primary image. Pooled.
     fn sync_images(&self, provider_product_id: &str, images: &[String]) -> Result<()> {
-        let existing = self
-            .client
-            .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
-            .list()
-            .filter(&format!(
-                "provider_product_id='{}'",
-                escape_filter(provider_product_id)
-            ))
-            .per_page(100)
-            .call::<ProductImageRow>()
-            .context("could not look up product images")?;
+        let filter = format!(
+            "provider_product_id='{}'",
+            escape_filter(provider_product_id)
+        );
+        let url = self.records_url(PROVIDER_PRODUCT_IMAGES_COLLECTION, Some(&filter), 100)?;
+        let existing = self.agent_get_json::<Page<ProductImageRow>>(&url)?;
 
         for (position, url) in images.iter().enumerate() {
             self.upsert_image(provider_product_id, position, url, &existing.items)?;
@@ -303,32 +339,166 @@ impl Store {
             is_primary: position == 0,
         };
         match existing.iter().find(|row| row.url == url) {
-            Some(row) => self
-                .client
-                .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
-                .update(&row.id, payload)
-                .call()
-                .map(|_| ()),
-            None => self
-                .client
-                .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
-                .create(payload)
-                .call()
-                .map(|_| ()),
+            Some(row) => {
+                self.agent_patch_json::<serde_json::Value>(
+                    &self.record_url(PROVIDER_PRODUCT_IMAGES_COLLECTION, &row.id),
+                    &serde_json::to_string(&payload)?,
+                )?;
+            }
+            None => {
+                self.agent_post_json::<serde_json::Value>(
+                    &self.collection_url(PROVIDER_PRODUCT_IMAGES_COLLECTION),
+                    &serde_json::to_string(&payload)?,
+                )?;
+            }
         }
-        .map_err(|e| anyhow::anyhow!("could not write product image: {e}"))
+        Ok(())
     }
 
     fn remove_stale_images(&self, existing: &[ProductImageRow], images: &[String]) -> Result<()> {
         for row in existing {
             if !images.contains(&row.url) {
-                self.client
-                    .records(PROVIDER_PRODUCT_IMAGES_COLLECTION)
-                    .destroy(&row.id)
-                    .call()
-                    .map_err(|e| anyhow::anyhow!("could not delete stale product image: {e}"))?;
+                self.agent_delete(&self.record_url(PROVIDER_PRODUCT_IMAGES_COLLECTION, &row.id))?;
             }
         }
         Ok(())
+    }
+
+    /// Lists every `provider_products` row for `provider_id`, paginated, via the
+    /// pooled agent.
+    fn list_provider_products(&self, provider_id: &str) -> Result<Vec<ProviderProductRow>> {
+        let filter = format!("provider_id='{}'", escape_filter(provider_id));
+        let mut items = Vec::new();
+        let mut page = 1;
+        loop {
+            let url = self.records_url_paged(PROVIDER_PRODUCTS_COLLECTION, Some(&filter), 100, page)?;
+            let loaded = self.agent_get_json::<Page<ProviderProductRow>>(&url)?;
+            let count = loaded.items.len();
+            items.extend(loaded.items);
+            if count < 100 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(items)
+    }
+
+    // ---- pooled HTTP helpers ----
+
+    /// The base `.../api/collections/{collection}/records` URL.
+    fn collection_url(&self, collection: &str) -> String {
+        format!("{}/api/collections/{collection}/records", self.client.base_url)
+    }
+
+    /// A `.../records/{id}` URL.
+    fn record_url(&self, collection: &str, id: &str) -> String {
+        format!("{}/{id}", self.collection_url(collection))
+    }
+
+    /// A records URL with an optional filter and page size (page 1).
+    fn records_url(
+        &self,
+        collection: &str,
+        filter: Option<&str>,
+        per_page: usize,
+    ) -> Result<String> {
+        self.records_url_paged(collection, filter, per_page, 1)
+    }
+
+    /// A records URL with an optional filter, page size and page number.
+    fn records_url_paged(
+        &self,
+        collection: &str,
+        filter: Option<&str>,
+        per_page: usize,
+        page: usize,
+    ) -> Result<String> {
+        let mut url = url::Url::parse(&self.collection_url(collection))
+            .context("could not parse records url")?;
+        url.query_pairs_mut().append_pair("perPage", &per_page.to_string());
+        url.query_pairs_mut().append_pair("page", &page.to_string());
+        if let Some(filter) = filter {
+            url.query_pairs_mut().append_pair("filter", filter);
+        }
+        Ok(url.to_string())
+    }
+
+    /// A records URL with a `sort` parameter.
+    fn records_url_sorted(
+        &self,
+        collection: &str,
+        filter: &str,
+        sort: &str,
+        per_page: usize,
+    ) -> Result<String> {
+        let mut url = url::Url::parse(&self.collection_url(collection))
+            .context("could not parse records url")?;
+        url.query_pairs_mut().append_pair("perPage", &per_page.to_string());
+        url.query_pairs_mut().append_pair("page", "1");
+        url.query_pairs_mut().append_pair("filter", filter);
+        url.query_pairs_mut().append_pair("sort", sort);
+        Ok(url.to_string())
+    }
+
+    /// The auth token for the pooled agent.
+    fn auth_token(&self) -> Result<String> {
+        self.client
+            .auth_token
+            .clone()
+            .context("not authenticated to PocketBase")
+    }
+
+    /// Pooled GET that deserializes the JSON response.
+    fn agent_get_json<T: DeserializeOwned>(&self, url: &str) -> Result<T> {
+        let token = self.auth_token()?;
+        let res = self
+            .agent
+            .get(url)
+            .set("Authorization", &token)
+            .call()
+            .map_err(|e| anyhow::anyhow!("GET {url}: {e}"))?;
+        res.into_json().map_err(|e| anyhow::anyhow!("GET {url}: bad JSON: {e}"))
+    }
+
+    /// Pooled POST that deserializes the JSON response.
+    fn agent_post_json<T: DeserializeOwned>(&self, url: &str, body: &str) -> Result<T> {
+        let token = self.auth_token()?;
+        let res = self
+            .agent
+            .post(url)
+            .set("Authorization", &token)
+            .set("Content-Type", "application/json")
+            .send_string(body)
+            .map_err(|e| anyhow::anyhow!("POST {url}: {e}"))?;
+        res.into_json().map_err(|e| anyhow::anyhow!("POST {url}: bad JSON: {e}"))
+    }
+
+    /// Pooled PATCH that deserializes the JSON response.
+    fn agent_patch_json<T: DeserializeOwned>(&self, url: &str, body: &str) -> Result<T> {
+        let token = self.auth_token()?;
+        let res = self
+            .agent
+            .patch(url)
+            .set("Authorization", &token)
+            .set("Content-Type", "application/json")
+            .send_string(body)
+            .map_err(|e| anyhow::anyhow!("PATCH {url}: {e}"))?;
+        res.into_json().map_err(|e| anyhow::anyhow!("PATCH {url}: bad JSON: {e}"))
+    }
+
+    /// Pooled DELETE; a 404 counts as success.
+    fn agent_delete(&self, url: &str) -> Result<()> {
+        let token = self.auth_token()?;
+        match self.agent.delete(url).set("Authorization", &token).call() {
+            Ok(_) => Ok(()),
+            Err(ureq::Error::Status(status, response)) => {
+                if status == 404 {
+                    return Ok(());
+                }
+                let detail = response.into_string().unwrap_or_default();
+                Err(anyhow::anyhow!("DELETE {url}: HTTP {status} body: {detail}"))
+            }
+            Err(e) => Err(anyhow::anyhow!("DELETE {url}: {e}")),
+        }
     }
 }

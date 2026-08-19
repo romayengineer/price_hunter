@@ -37,7 +37,7 @@ async fn run_with(driver: &WebDriver) -> WebDriverResult<()> {
     let detection = autoscrape::scrape_until_no_growth(
         driver,
         strategy.as_mut(),
-        Duration::from_millis(500),
+        Duration::from_secs(10),
         100,
         |_| {},
     )

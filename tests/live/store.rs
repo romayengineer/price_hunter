@@ -118,6 +118,7 @@ fn save_round_trips_through_the_api() {
         .call::<ProviderRow>()
         .expect("list providers");
     assert_eq!(providers.items.len(), 1, "provider should be auto-created");
+    let provider_id = providers.items[0].id.clone();
 
     let scrapes = client
         .records("scrapes")
@@ -134,6 +135,7 @@ fn save_round_trips_through_the_api() {
     let products = client
         .records("provider_products")
         .list()
+        .filter(&format!("provider_id='{provider_id}'"))
         .call::<ProviderProductRow>()
         .expect("list provider products");
     let urls: Vec<&str> = products
@@ -246,6 +248,7 @@ fn save_round_trips_through_the_api() {
     let images = client
         .records("provider_product_images")
         .list()
+        .filter(&format!("provider_product_id='{pp_id}'"))
         .call::<ImageRow>()
         .expect("list product images");
     assert!(

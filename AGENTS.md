@@ -260,8 +260,16 @@ password = "change-me"          # required; first run writes a commented templat
   calls the growth callback whenever the detected count increases, and the CLI
   writes a JSON capture + PocketBase save per batch (same schema as browse
   mode), so `provider_products` is populated while the scrape is still running,
-  not only when it finishes. It navigates to `url`, then drives the
-  site-specific strategy until the detected product count stops increasing:
+  not only when it finishes. Persistence is fast: the save path runs through the
+  pooled `ureq::Agent` (one keep-alive connection, not a fresh TCP connection per
+  HTTP call — the SDK's one-shot client would be slow), the CLI saves only the
+  **newly-seen products** each growth (`save_incremental`, diffed by name in a
+  `seen` set), and `provider_products`/prices/images are resolved via a single
+  bulk read per batch. After each load-more action the loop waits (polling every
+  `POLL_INTERVAL`, up to `SETTLE`) for the count to actually grow, so it does
+  not re-click while the page is still loading. It navigates to `url`, then
+  drives the site-specific strategy until the detected product count stops
+  increasing:
   - default (and unknown hosts): scroll down and click a load-more button
     (`-button <css>` forces the selector; otherwise common load-more
     classes/aria/text are tried),

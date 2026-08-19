@@ -255,9 +255,12 @@ password = "change-me"          # required; first run writes a commented templat
   to a CSV with a single `name` column (one row per brand, sorted by name,
   UTF-8 BOM for Excel). Exports every brand. The `name` header matches the
   table column, so the file round-trips through `-import-brands`.
-- `cargo run -- -auto-scrape <url>` automatically scrapes a listing page to
-  completion and persists the largest grid detected (JSON capture +
-  PocketBase, same as the browse mode). It navigates to `url`, then drives the
+- `cargo run -- -auto-scrape <url>` automatically scrapes a listing page and
+  persists products **incrementally** as they are detected — `scrape_until_no_growth`
+  calls the growth callback whenever the detected count increases, and the CLI
+  writes a JSON capture + PocketBase save per batch (same schema as browse
+  mode), so `provider_products` is populated while the scrape is still running,
+  not only when it finishes. It navigates to `url`, then drives the
   site-specific strategy until the detected product count stops increasing:
   - default (and unknown hosts): scroll down and click a load-more button
     (`-button <css>` forces the selector; otherwise common load-more

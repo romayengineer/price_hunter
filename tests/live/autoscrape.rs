@@ -39,6 +39,7 @@ async fn run_with(driver: &WebDriver) -> WebDriverResult<()> {
         strategy.as_mut(),
         Duration::from_millis(500),
         100,
+        |_| {},
     )
     .await
     .map_err(|e| {

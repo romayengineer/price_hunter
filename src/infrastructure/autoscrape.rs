@@ -245,18 +245,25 @@ impl NoGrowthTracker {
 
 /// Drives `strategy` over the page `driver` currently shows, repeating the
 /// load-more action until the detected product count stops increasing, the
-/// strategy reports exhaustion, or the step budget is spent. Returns the
-/// largest grid detected (or `None` if no grid was ever found).
+/// strategy reports exhaustion, or the step budget is spent. `on_growth` is
+/// invoked with the current (largest) detection whenever the detected product
+/// count grows, so callers can persist incrementally instead of waiting for the
+/// loop to finish. Returns the largest grid detected (or `None` if no grid was
+/// ever found).
 pub async fn scrape_until_no_growth(
     driver: &WebDriver,
     strategy: &mut dyn AutoScraper,
     settle: Duration,
     max_steps: usize,
+    on_growth: impl FnMut(&Detection),
 ) -> Result<Option<Detection>> {
     let mut tracker = NoGrowthTracker::new(NO_GROWTH_LIMIT);
     let mut best: Option<Detection> = None;
+    let mut on_growth = on_growth;
     for step in 0..max_steps {
-        if !auto_scrape_step(driver, strategy, &mut best, &mut tracker, step).await? {
+        if !auto_scrape_step(driver, strategy, &mut best, &mut tracker, step, &mut on_growth)
+            .await?
+        {
             break;
         }
         tokio::time::sleep(settle).await;
@@ -273,8 +280,9 @@ async fn auto_scrape_step(
     best: &mut Option<Detection>,
     tracker: &mut NoGrowthTracker,
     step: usize,
+    on_growth: &mut impl FnMut(&Detection),
 ) -> Result<bool> {
-    let keep_going = scrape_step(driver, strategy, best, tracker).await?;
+    let keep_going = scrape_step(driver, strategy, best, tracker, on_growth).await?;
     log::info!(
         "auto-scrape step {step}: best = {} products",
         count_of(best)
@@ -294,20 +302,22 @@ async fn scrape_step(
     strategy: &mut dyn AutoScraper,
     best: &mut Option<Detection>,
     tracker: &mut NoGrowthTracker,
+    on_growth: &mut impl FnMut(&Detection),
 ) -> Result<bool> {
-    if !record_current_products(driver, best, tracker).await? {
+    if !record_current_products(driver, best, tracker, on_growth).await? {
         return Ok(false);
     }
     strategy.next(driver).await
 }
 
 /// Detects products on the current page, updating `best` with any larger grid
-/// and `tracker` with the count. Returns whether scraping should continue
-/// (per the tracker's no-growth rule).
+/// and `tracker` with the count, and invoking `on_growth` when the count grows.
+/// Returns whether scraping should continue (per the tracker's no-growth rule).
 async fn record_current_products(
     driver: &WebDriver,
     best: &mut Option<Detection>,
     tracker: &mut NoGrowthTracker,
+    on_growth: &mut impl FnMut(&Detection),
 ) -> Result<bool> {
     let source = driver.source().await?;
     let Some(detection) = detect::detect_grid(&source) else {
@@ -316,6 +326,9 @@ async fn record_current_products(
     let count = detection.products.len();
     if best.as_ref().is_none_or(|b| count > b.products.len()) {
         *best = Some(detection);
+        if let Some(best) = best {
+            on_growth(best);
+        }
     }
     Ok(tracker.record(count))
 }

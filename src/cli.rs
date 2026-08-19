@@ -498,8 +498,9 @@ async fn auto_scrape(options: &AutoScrapeOptions) -> anyhow::Result<()> {
     quit.map_err(Into::into)
 }
 
-/// Runs the auto-scrape loop on an already-launched `driver`, persisting the
-/// final grid. Returns the number of products scraped.
+/// Runs the auto-scrape loop on an already-launched `driver`, persisting each
+/// batch of newly detected products as the scrape progresses. Returns the
+/// number of products scraped.
 async fn auto_scrape_with_driver(
     driver: &WebDriver,
     options: &AutoScrapeOptions,
@@ -514,38 +515,62 @@ async fn auto_scrape_with_driver(
         "Auto-scraping {url} with {} strategy",
         strategy_kind_name(autoscrape::effective_strategy(url, options))
     );
+
+    let mut last_count = 0usize;
     let detection = autoscrape::scrape_until_no_growth(
         driver,
         strategy.as_mut(),
         autoscrape::SETTLE,
         autoscrape::MAX_STEPS,
+        |detection| {
+            if detection.products.len() <= last_count {
+                return;
+            }
+            last_count = detection.products.len();
+            persist_detection(store, url, detection);
+        },
     )
     .await?;
 
-    let Some(detection) = detection else {
-        println!("No product grid detected on {url}");
-        return Ok(0);
-    };
+    // Persist the final detection too, so the last batch is never missed even
+    // if the loop ended without a growth callback (e.g. strategy exhaustion).
+    if let Some(detection) = &detection {
+        persist_detection(store, url, detection);
+    }
+    println!(
+        "Scraped {} products from {url}",
+        count_of(&detection)
+    );
+    Ok(count_of(&detection))
+}
 
+/// The number of products in an optional detection (0 when none).
+fn count_of(detection: &Option<Detection>) -> usize {
+    detection.as_ref().map_or(0, |d| d.products.len())
+}
+
+/// Writes a JSON capture for `detection` and persists it to PocketBase. A
+/// failed write/save is logged, never fatal — the scrape continues.
+fn persist_detection(store: &Store, url: &str, detection: &Detection) {
+    let path = match capture::write_capture("captures", url, detection) {
+        Ok(path) => path,
+        Err(e) => {
+            log::error!("Could not write capture for {url}: {e}");
+            return;
+        }
+    };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let path = match capture::write_capture("captures", url, &detection) {
-        Ok(path) => path,
-        Err(e) => {
-            anyhow::bail!("could not write capture for {url}: {e}");
-        }
-    };
-    println!(
-        "Scraped {} products to {}",
-        detection.products.len(),
-        path.display()
-    );
-    if let Err(e) = store.save(url, now, &path.display().to_string(), &detection) {
-        log::error!("Could not persist capture to the store: {e}");
+    match store.save(url, now, &path.display().to_string(), detection) {
+        Ok(()) => println!(
+            "Persisted {} products to {}",
+            detection.products.len(),
+            path.display()
+        ),
+        Err(e) => log::error!("Could not persist capture to the store: {e}"),
     }
-    Ok(detection.products.len())
 }
 
 /// A short display name for a strategy kind, for user-facing output.

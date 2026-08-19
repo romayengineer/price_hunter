@@ -161,8 +161,8 @@ password = "change-me"          # required; first run writes a commented templat
 - `cargo run -- -import-brands <file.csv>` imports the canonical brand list
   (one column, brand name) into the `brand` collection. A leading `name`
   header row, empty rows and duplicates are skipped; the unique index on
-  `name` backstops idempotency. The collection is created by migration
-  `1787000002_brand.js` and is intended for later use in flagging
+  `name` backstops idempotency. The collection is created by
+  `pocketbase/migrations/1787000000_init.js` and is intended for later use in flagging
   provider_products whose names contain no known brand.
 - `cargo run -- -import-unmatched` proposes canonical `products` rows from
   unmatched provider products (`product_id` empty). Each name is split into
@@ -192,9 +192,9 @@ password = "change-me"          # required; first run writes a commented templat
   provider products are linked using the stored scores ≥ `MIN_SCORE`. Note:
   existing rows below 0.6 (written by older versions that cached every score)
   are left in place — they count as already-computed skips but are never linked.
-  The `score` field was made non-required by migration
-  `1787000001_allow_zero_scores.js` — PocketBase treats `required` numbers as
-  blank when they are 0; the migration is now moot but kept for history.
+  The `score` field is non-required in `pocketbase/migrations/1787000000_init.js`
+  so 0 can be stored — PocketBase treats `required` numbers as blank when they
+  are 0.
 - `cargo run -- -link-matches` re-links provider products to canonical products
   using **only the already-stored comparisons** (queries just the `score >=
   MIN_SCORE` subset — no backfill, completes in seconds). Use it to refresh
@@ -210,8 +210,8 @@ password = "change-me"          # required; first run writes a commented templat
   scores too low when a brand is a small slice of a long name). Unresolved
   products keep `brand_id` empty so `brand_id=null` finds them. Note:
   PocketBase serializes unset relations as `""`, not `null`, so `Some("")` is
-  treated as "unset" throughout. The `brand_id` field is added by migration
-  `1787000003_provider_product_brand.js`.
+  treated as "unset" throughout. The `brand_id` field is defined in
+  `pocketbase/migrations/1787000000_init.js`.
 - `cargo run -- -report-missing-brands` lists every provider product linked to a
   canonical product (`product_id` set) whose stored name does not contain that
   product's brand (token coverage < 1.0). These are candidate extractor bugs:
@@ -383,9 +383,10 @@ Known markup classes the detector already handles: PrestaShop
   fresh checkout.
 - **Never write SQL and never touch the database file directly** — the scraper
   persists ONLY through the PocketBase Record API (authenticated as superuser).
-  Schema changes go in a NEW `pocketbase/migrations/<ts>_<name>.js` file
-  (applied automatically on the next `pocketbase serve`); do not use `sqlite3`
-  on the PocketBase data file.
+  Schema is currently a single `pocketbase/migrations/1787000000_init.js` file
+  (merged state, applied automatically on the next `pocketbase serve`); future
+  changes go in a NEW `pocketbase/migrations/<ts>_<name>.js` file — do not use
+  `sqlite3` on the PocketBase data file.
 - Do not `driver.quit()`/drop early while the user is driving the browser; keep
   the `WebDriver` alive until the browser window closes (probe with
   `driver.current_url()`).

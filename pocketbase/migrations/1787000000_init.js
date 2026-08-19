@@ -1,6 +1,6 @@
 // Creates the price_hunter schema (mirrors DATABASE.md):
 //
-//   providers, products (canonical), scrapes, provider_products,
+//   providers, products (canonical), brand, scrapes, provider_products,
 //   provider_product_images, provider_product_matches, provider_product_prices
 //
 // No SQL anywhere — schema is defined through the PocketBase JS migration API
@@ -59,6 +59,23 @@ migrate(
     });
     app.save(products);
 
+    const brand = new Collection({
+      type: "base",
+      name: "brand",
+      listRule: "",
+      viewRule: "",
+      createRule: null,
+      updateRule: null,
+      deleteRule: null,
+      indexes: ["CREATE UNIQUE INDEX idx_brand_name ON brand (name)"],
+      fields: [
+        { name: "name", type: "text", required: true },
+        { name: "created", type: "autodate", onCreate: true, onUpdate: false },
+        { name: "updated", type: "autodate", onCreate: true, onUpdate: true },
+      ],
+    });
+    app.save(brand);
+
     const scrapes = new Collection({
       type: "base",
       name: "scrapes",
@@ -98,6 +115,7 @@ migrate(
       indexes: [
         "CREATE UNIQUE INDEX idx_provider_products_provider_url ON provider_products (provider_id, provider_product_url)",
         "CREATE UNIQUE INDEX idx_provider_products_provider_name ON provider_products (provider_id, name)",
+        "CREATE INDEX idx_provider_products_brand_id ON provider_products (brand_id)",
       ],
       fields: [
         {
@@ -119,6 +137,13 @@ migrate(
           type: "relation",
           collectionId: products.id,
           maxSelect: 1,
+        },
+        {
+          name: "brand_id",
+          type: "relation",
+          collectionId: brand.id,
+          maxSelect: 1,
+          required: false,
         },
         { name: "last_seen_at", type: "date", required: true },
         { name: "created", type: "autodate", onCreate: true, onUpdate: false },
@@ -184,7 +209,9 @@ migrate(
           maxSelect: 1,
           required: true,
         },
-        { name: "score", type: "number", required: true },
+        // Not required so zero scores can be stored: PocketBase treats
+        // `required` number fields as blank when the value is 0.
+        { name: "score", type: "number", required: false },
         { name: "status", type: "text", required: true },
         { name: "created", type: "autodate", onCreate: true, onUpdate: false },
         { name: "updated", type: "autodate", onCreate: true, onUpdate: true },
@@ -229,6 +256,7 @@ migrate(
   },
   (app) => {
     for (const name of [
+      "brand",
       "products",
       "provider_product_images",
       "provider_product_matches",

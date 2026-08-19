@@ -27,6 +27,13 @@ erDiagram
         datetime updated_at
     }
 
+    brand {
+        int id PK
+        varchar name UK "canonical brand"
+        datetime created_at
+        datetime updated_at
+    }
+
     scrapes {
         int id PK
         int provider_id FK "references providers.id"
@@ -49,6 +56,7 @@ erDiagram
         varchar provider_size "size as scraped"
         varchar availability "in_stock, out_of_stock, ..."
         int product_id FK, UK "nullable, confirmed link to products.id"
+        int brand_id FK "nullable, link to brand.id"
         datetime last_seen_at
         datetime created_at
     }
@@ -80,12 +88,13 @@ erDiagram
         decimal price "inserted only when price or currency changed"
         varchar currency "e.g. ARS, USD"
         varchar price_text "raw text from HTML"
-        datetime created_at UK "unique with provider_product_id"
+        datetime created_at
     }
 
     providers ||--o{ scrapes : "scraped by"
     providers ||--o{ provider_products : "lists"
     products o|--o{ provider_products : "matched to"
+    brand ||--o{ provider_products : "brands"
     provider_products ||--o{ provider_product_matches : "has candidates"
     products o|--o{ provider_product_matches : "suggested as"
     provider_products ||--o{ provider_product_images : "shows"
@@ -105,6 +114,7 @@ erDiagram
 | enabled    | boolean | whether this provider is being scraped |
 | default_currency | varchar | fallback when no currency is detected on a card (e.g. `ARS`) |
 | created_at | datetime | |
+| updated_at | datetime | |
 
 ### products
 
@@ -128,6 +138,19 @@ duplicates them. The fuzzy matcher compares `provider_products.name` against
 `products.name`.
 
 Unique: `(brand, product_name, size)` — enforced with `COALESCE` so a missing brand/size still participates in the uniqueness check.
+
+### brand
+
+Canonical brand list imported from CSV. Used to flag provider products whose names contain no known brand and to assign `provider_products.brand_id`.
+
+| Column   | Type     | Notes |
+| -------- | -------- | ----- |
+| id       | int      | primary key |
+| name     | varchar  | brand name, unique |
+| created_at | datetime | |
+| updated_at | datetime | when the row was last edited |
+
+Unique: `(name)`.
 
 ### scrapes
 
@@ -160,10 +183,12 @@ A product as listed on a specific provider's site. `name` is extracted from the 
 | provider_size         | varchar  | size as scraped |
 | availability          | varchar  | e.g. `in_stock`, `out_of_stock` |
 | product_id            | int      | nullable; confirmed foreign key → `products.id` |
+| brand_id              | int      | nullable; foreign key → `brand.id`, assigned by `-match-brands` |
 | last_seen_at          | datetime | last poll that observed this listing |
 | created_at            | datetime | |
+| updated_at            | datetime | |
 
-Unique: `(provider_id, provider_product_url)` and `(provider_id, name)`. The store looks a provider product up by name first (reusing the row when a name appears at a new URL), then by URL. For matched rows, `product_id` is unique per provider product.
+Unique: `(provider_id, provider_product_url)` and `(provider_id, name)`. The store looks a provider product up by name first (reusing the row when a name appears at a new URL), then by URL. For matched rows, `product_id` is unique per provider product. Non-unique index on `(brand_id)` for brand filtering.
 
 ### provider_product_images
 
@@ -190,7 +215,7 @@ Fuzzy-match results between a provider product and canonical products. Stores th
 | id                  | int      | primary key |
 | provider_product_id | int      | foreign key → `provider_products.id` |
 | product_id          | int      | foreign key → `products.id` |
-| score               | decimal  | fuzzy match confidence (0–1) |
+| score               | decimal  | fuzzy match confidence (0–1), not required so 0 can be stored |
 | status              | varchar  | `pending`, `confirmed`, `rejected` |
 | created_at          | datetime | |
 | updated_at          | datetime | when the match status was last changed |
@@ -212,14 +237,16 @@ Price-change history for a provider product. A row is inserted only when `price`
 | currency            | varchar   | e.g. `ARS`, `USD` |
 | price_text          | varchar   | raw text from HTML, for auditing |
 | created_at          | datetime  | |
+| updated_at          | datetime  | |
 
-Unique: `(provider_product_id, created_at)` guards against duplicate snapshots within one poll.
+Unique: `(provider_product_id, scrape_id)` guards against duplicate snapshots within one poll.
 
 ## Implementation notes
 
 The app persists through the PocketBase Record API only (no SQL, no direct DB file access).
 
 - All `FK` markers above are logical references; PocketBase does not enforce foreign keys. Enforced in application code.
-- Unique constraints **are** supported: PocketBase backs collections with SQLite and lets migrations define unique indexes via `$collection->indexes.add(...)`. The `(provider_id, provider_product_url)`, `(provider_id, name)`, `(provider_product_id, created_at)`, `(provider_product_id, product_id)`, `(provider_product_id, url)`, and `(brand, name, size)` uniques should be declared there, not only in app code.
+- Unique constraints **are** supported: PocketBase backs collections with SQLite and lets migrations define unique indexes via `$collection->indexes.add(...)`. The `(provider_id, provider_product_url)`, `(provider_id, name)`, `(provider_product_id, scrape_id)`, `(provider_product_id, product_id)`, `(provider_product_id, url)`, `(brand, product_name, size)`, and `(brand.name)` uniques should be declared there, not only in app code. `provider_products.brand_id` has a non-unique index for filtering.
 - `boolean`/`decimal`/`datetime` in this diagram map to PocketBase's `bool`/`number`/`date` collection field types.
 - If a future migration moves this model to a relational SQL database (Diesel/SQLx), FK constraints become enforceable schema-level `FOREIGN KEY` clauses.
+- Schema is defined by a single migration `pocketbase/migrations/1787000000_init.js` (previously split across `1787000001_allow_zero_scores.js`, `1787000002_brand.js`, `1787000003_provider_product_brand.js`, now merged; delete `pb_data` to re-apply on existing installs).

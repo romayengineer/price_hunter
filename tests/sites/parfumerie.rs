@@ -61,7 +61,9 @@ fn products() -> Vec<Product> {
             ..Default::default()
         },
         Product {
-            name: String::from("RABANNE ONE MILLION NIGHT ELIXIR MEN PARFUM ELIXIR 100ML EDICION LIMITADA"),
+            name: String::from(
+                "RABANNE ONE MILLION NIGHT ELIXIR MEN PARFUM ELIXIR 100ML EDICION LIMITADA",
+            ),
             price_text: String::new(),
             price: 256000.0,
             ..Default::default()
@@ -109,7 +111,9 @@ fn products() -> Vec<Product> {
             ..Default::default()
         },
         Product {
-            name: String::from("CAROLINA HERRERA 212 MEN EDT 100ML & DESODORANTE 75ML & TRAVEL SIZE 10ML SET"),
+            name: String::from(
+                "CAROLINA HERRERA 212 MEN EDT 100ML & DESODORANTE 75ML & TRAVEL SIZE 10ML SET",
+            ),
             price_text: String::new(),
             price: 259900.0,
             ..Default::default()

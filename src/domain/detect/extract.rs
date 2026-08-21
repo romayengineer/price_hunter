@@ -319,15 +319,14 @@ fn is_brand_element(el: &scraper::node::Element) -> bool {
             || c.contains("productBrandContainer")
             || c.contains("product-item-brand")
             || c.contains("__brand")
-    }) || (el.name() == "strong"
-        && classes.contains(&"brand")
-        && classes.contains(&"product"))
+    }) || (el.name() == "strong" && classes.contains(&"brand") && classes.contains(&"product"))
 }
 
 fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+#[allow(clippy::cognitive_complexity)] // heuristic DOM walk — splitting hurts readability
 pub(super) fn find_structured_name(node: &NodeRef<'_, Node>) -> Option<String> {
     for n in node.descendants() {
         let Node::Element(el) = n.value() else {

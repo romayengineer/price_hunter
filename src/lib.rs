@@ -22,3 +22,4 @@ pub use crate::infrastructure::export;
 pub use crate::infrastructure::instance;
 pub use crate::infrastructure::matrix_server;
 pub use crate::infrastructure::store;
+pub use crate::infrastructure::terminal;

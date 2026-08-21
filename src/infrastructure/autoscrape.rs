@@ -145,9 +145,7 @@ impl ScrollAndClick {
 impl AutoScraper for ScrollAndClick {
     async fn next(&mut self, driver: &WebDriver) -> Result<bool> {
         loop {
-            if let Some(button) =
-                find_load_more_button(driver, self.selector.as_deref()).await?
-            {
+            if let Some(button) = find_load_more_button(driver, self.selector.as_deref()).await? {
                 log::info!("scroll-click: found load-more button, clicking");
                 click_load_more(driver, &button).await?;
                 return Ok(true);
@@ -256,8 +254,7 @@ pub(crate) fn set_page_url(base: &str, param: &str, page: u32) -> String {
     for (k, v) in other {
         url.query_pairs_mut().append_pair(&k, &v);
     }
-    url.query_pairs_mut()
-        .append_pair(param, &page.to_string());
+    url.query_pairs_mut().append_pair(param, &page.to_string());
     url.to_string()
 }
 
@@ -274,7 +271,9 @@ pub(crate) fn extract_page(url: &str, param: &str) -> Option<u32> {
     let parsed = url::Url::parse(url).ok()?;
     let mut last = None;
     for (k, v) in parsed.query_pairs() {
-        if k == param && let Ok(n) = v.parse::<u32>() {
+        if k == param
+            && let Ok(n) = v.parse::<u32>()
+        {
             last = Some(n);
         }
     }
@@ -401,14 +400,19 @@ pub fn strategy_for(url: &str, options: &AutoScrapeOptions) -> Box<dyn AutoScrap
     let inner: Box<dyn AutoScraper> = match effective_strategy(url, options) {
         StrategyKind::ScrollClick => Box::new(ScrollAndClick::new(options.button.clone())),
         StrategyKind::InfiniteScroll => Box::new(InfiniteScroll),
-        StrategyKind::Page => {
-            Box::new(PageParam::new(url.to_string(), options.page_param_name().to_string()))
-        }
+        StrategyKind::Page => Box::new(PageParam::new(
+            url.to_string(),
+            options.page_param_name().to_string(),
+        )),
     };
     let threshold = options.window_threshold();
     let param = options.page_param_name();
     if threshold != 0 {
-        Box::new(WindowedAutoScraper::new(inner, param.to_string(), threshold))
+        Box::new(WindowedAutoScraper::new(
+            inner,
+            param.to_string(),
+            threshold,
+        ))
     } else {
         inner
     }
@@ -616,7 +620,9 @@ async fn wait_for_growth(
             return Ok(count);
         }
         if tokio::time::Instant::now() >= deadline {
-            log::info!("waited {timeout:?} for product count to grow from {before}, current = {count}");
+            log::info!(
+                "waited {timeout:?} for product count to grow from {before}, current = {count}"
+            );
             return Ok(count);
         }
         tokio::time::sleep(POLL_INTERVAL).await;
@@ -710,7 +716,9 @@ async fn matches_heuristic_text(element: &WebElement) -> bool {
 
 /// Whether `text` matches a known load-more phrase (case-insensitively).
 fn text_matches_heuristic(text: &str) -> bool {
-    HEURISTIC_TEXTS.iter().any(|t| text.to_lowercase().contains(t))
+    HEURISTIC_TEXTS
+        .iter()
+        .any(|t| text.to_lowercase().contains(t))
 }
 
 /// Scrolls the page down by one viewport height. Returns `true` when the scroll
@@ -793,8 +801,14 @@ mod tests {
 
     #[test]
     fn default_strategy_known_infinite_scroll_host() {
-        assert_eq!(default_strategy("www.parfumerie.com.ar"), StrategyKind::InfiniteScroll);
-        assert_eq!(default_strategy("www.beauty24.com.ar"), StrategyKind::ScrollClick);
+        assert_eq!(
+            default_strategy("www.parfumerie.com.ar"),
+            StrategyKind::InfiniteScroll
+        );
+        assert_eq!(
+            default_strategy("www.beauty24.com.ar"),
+            StrategyKind::ScrollClick
+        );
         assert_eq!(default_strategy(""), StrategyKind::ScrollClick);
     }
 
@@ -835,7 +849,11 @@ mod tests {
             "https://example.com/list?sort=price&page=5"
         );
         assert_eq!(
-            set_page_url("https://example.com/list?sort=price&page=2&foo=bar", "page", 3),
+            set_page_url(
+                "https://example.com/list?sort=price&page=2&foo=bar",
+                "page",
+                3
+            ),
             "https://example.com/list?sort=price&foo=bar&page=3"
         );
         // page_url now delegates to set_page_url and must not duplicate
@@ -1007,9 +1025,7 @@ mod tests {
                 10 + i
             ));
         }
-        format!(
-            r#"<html><body><div class="product-grid">{cards}</div></body></html>"#
-        )
+        format!(r#"<html><body><div class="product-grid">{cards}</div></body></html>"#)
     }
 
     fn reset_window_state() {
@@ -1026,7 +1042,10 @@ mod tests {
         let reloaded = scraper.try_reload_if_needed(&driver).await.unwrap();
         assert!(reloaded, "expected reload when 120 >= 120");
         assert_eq!(driver.goto_log.lock().unwrap().len(), 1);
-        assert_eq!(driver.goto_log.lock().unwrap()[0], "https://example.com/list?page=8");
+        assert_eq!(
+            driver.goto_log.lock().unwrap()[0],
+            "https://example.com/list?page=8"
+        );
         assert!(WINDOW_RELOADED.load(Ordering::SeqCst));
         assert!(scraper.reloaded.contains(&8));
     }
@@ -1065,10 +1084,8 @@ mod tests {
     async fn window_reload_exact_same_url_preserving_params() {
         let _guard = WINDOW_TEST_LOCK.lock().unwrap();
         reset_window_state();
-        let driver = FakeDriver::with_products(
-            "https://example.com/list?sort=price&page=8&foo=bar",
-            120,
-        );
+        let driver =
+            FakeDriver::with_products("https://example.com/list?sort=price&page=8&foo=bar", 120);
         let mut scraper = WindowedAutoScraper::new(Box::new(NoopScraper), "page".to_string(), 120);
         let reloaded = scraper.try_reload_if_needed(&driver).await.unwrap();
         assert!(reloaded);

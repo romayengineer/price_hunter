@@ -202,7 +202,9 @@ pub fn missing_brands(store: &impl PriceStore) -> Result<MissingBrandReport, Pri
 /// the `brand` values of the canonical products. Rows returned here are
 /// candidates for `-delete-unbranded`: after a re-scrape with brand-enriched
 /// extraction, names without any brand are stale.
-pub fn unbranded_products(store: &impl PriceStore) -> Result<Vec<ProviderProductRow>, PriceStoreError> {
+pub fn unbranded_products(
+    store: &impl PriceStore,
+) -> Result<Vec<ProviderProductRow>, PriceStoreError> {
     let provider_products = store.list_provider_products()?;
     let products = store.list_all_products()?;
     let brands = store.list_brands()?;

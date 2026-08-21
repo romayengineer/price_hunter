@@ -245,7 +245,9 @@ mod tests {
     #[test]
     fn parses_best_count_from_log_line() {
         assert_eq!(
-            parse_best_count("2026-08-19T04:00:00Z INFO  price_hunter::infrastructure::autoscrape] auto-scrape step 3: best = 60 products"),
+            parse_best_count(
+                "2026-08-19T04:00:00Z INFO  price_hunter::infrastructure::autoscrape] auto-scrape step 3: best = 60 products"
+            ),
             Some(60)
         );
         assert_eq!(

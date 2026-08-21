@@ -20,6 +20,7 @@ use price_hunter::domain::ports::PriceStore;
 use price_hunter::export;
 use price_hunter::instance::InstanceGuard;
 use price_hunter::store::Store;
+use price_hunter::terminal::{confirm, confirm_key};
 
 /// Every entry point of the binary.
 #[derive(Debug, PartialEq)]
@@ -105,12 +106,13 @@ pub fn parse(args: &[String]) -> Command {
 /// `-page-param`, `-window-threshold`, `-headless`) into [`AutoScrapeOptions`] for `url`.
 #[allow(clippy::cognitive_complexity)]
 fn parse_auto_scrape(rest: &[String], url: String) -> AutoScrapeOptions {
-    let strategy = arg_after_string(rest, "-strategy").map(|s| match s.to_ascii_lowercase().as_str() {
-        "scroll-click" | "scroll_click" | "scrollclick" => StrategyKind::ScrollClick,
-        "infinite" | "infinite-scroll" | "scroll" => StrategyKind::InfiniteScroll,
-        "page" | "pagination" => StrategyKind::Page,
-        _ => StrategyKind::ScrollClick,
-    });
+    let strategy =
+        arg_after_string(rest, "-strategy").map(|s| match s.to_ascii_lowercase().as_str() {
+            "scroll-click" | "scroll_click" | "scrollclick" => StrategyKind::ScrollClick,
+            "infinite" | "infinite-scroll" | "scroll" => StrategyKind::InfiniteScroll,
+            "page" | "pagination" => StrategyKind::Page,
+            _ => StrategyKind::ScrollClick,
+        });
     let button = arg_after_string(rest, "-button");
     let page_param = arg_after_string(rest, "-page-param").unwrap_or_default();
     let window_threshold = arg_after_string(rest, "-window-threshold")
@@ -165,72 +167,6 @@ pub async fn run(command: Command, yes: bool) -> anyhow::Result<()> {
         Command::AutoScrape(options) => auto_scrape(&options).await,
         Command::Browse(url) => browse(url).await,
     }
-}
-
-/// Returns `true` when `yes` was set or the user answered `y`/`yes` to
-/// `prompt`. With `yes` set no input is read, so a non-interactive run never
-/// hangs waiting on stdin.
-fn confirm(prompt: &str, yes: bool) -> anyhow::Result<bool> {
-    if yes {
-        return Ok(true);
-    }
-    use std::io::Write;
-    print!("{prompt} ");
-    std::io::stdout().flush()?;
-    let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer)?;
-    let answer = answer.trim();
-    Ok(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes"))
-}
-
-/// Returns `Ok(true)` for a single `y` key press (no Enter needed), `Ok(false)`
-/// for anything else. With `yes` set no key is read. Falls back to a full line
-/// when stdin is not a terminal.
-fn confirm_key(prompt: &str, yes: bool) -> anyhow::Result<bool> {
-    if yes {
-        return Ok(true);
-    }
-    use std::io::Write;
-    print!("{prompt} ");
-    std::io::stdout().flush()?;
-    let key = read_single_key()?;
-    println!();
-    Ok(key == b'y' || key == b'Y')
-}
-
-/// Reads one byte from stdin with the terminal in raw mode (no echo, no Enter
-/// required) and restores it afterwards. When stdin is not a TTY (piped input,
-/// tests), falls back to a line read and takes its first byte.
-fn read_single_key() -> anyhow::Result<u8> {
-    use std::io::Read;
-    use std::os::fd::AsRawFd;
-
-    let mut stdin = std::io::stdin();
-    let fd = stdin.as_raw_fd();
-    let raw = termios::Termios::from_fd(fd)
-        .and_then(|mut t| {
-            t.c_lflag &= !(termios::ICANON | termios::ECHO);
-            t.c_cc[termios::VMIN] = 1;
-            t.c_cc[termios::VTIME] = 0;
-            termios::tcsetattr(fd, termios::TCSANOW, &t)?;
-            Ok(t)
-        });
-    let mut buf = [0u8; 1];
-    let result: std::io::Result<u8> = match raw {
-        Ok(original) => {
-            let n = stdin.read(&mut buf);
-            let _ = termios::tcsetattr(fd, termios::TCSANOW, &original);
-            n.map(|count| if count == 0 { b'\n' } else { buf[0] })
-        }
-        Err(_) => {
-            let mut line = String::new();
-            match stdin.read_line(&mut line) {
-                Ok(_) => Ok(line.as_bytes().first().copied().unwrap_or(b'\n')),
-                Err(e) => Err(e),
-            }
-        }
-    };
-    result.map_err(Into::into)
 }
 
 /// Connects to PocketBase, writing the config template first if needed.
@@ -384,7 +320,12 @@ fn delete_unbranded(yes: bool) -> anyhow::Result<()> {
     for (page_index, page) in rows.chunks(50).enumerate() {
         println!();
         if yes {
-            println!("Deleting page {}/{} ({} rows)", page_index + 1, pages, page.len());
+            println!(
+                "Deleting page {}/{} ({} rows)",
+                page_index + 1,
+                pages,
+                page.len()
+            );
         } else {
             println!("Next page ({} rows):", page.len());
             for (i, row) in page.iter().enumerate() {
@@ -438,7 +379,11 @@ fn import_unmatched(yes: bool) -> anyhow::Result<()> {
         };
         println!(
             "{}/{}  {} | {} | {}",
-            i + 1, total, brand, proposal.product_name, size
+            i + 1,
+            total,
+            brand,
+            proposal.product_name,
+            size
         );
         println!("      from: {}", proposal.source_name);
         if !confirm_key("Insert as canonical product? (y/N)", yes)? {
@@ -512,7 +457,10 @@ async fn auto_scrape_with_driver(
 ) -> anyhow::Result<usize> {
     let url = &options.url;
     println!("Navigating to {url}");
-    driver.goto(url).await.with_context(|| format!("could not navigate to {url}"))?;
+    driver
+        .goto(url)
+        .await
+        .with_context(|| format!("could not navigate to {url}"))?;
 
     let mut strategy = autoscrape::strategy_for(url, options);
     println!(
@@ -544,10 +492,7 @@ async fn auto_scrape_with_driver(
             persist_new_products(store, url, &new_products);
         }
     }
-    println!(
-        "Scraped {} products from {url}",
-        count_of(&detection)
-    );
+    println!("Scraped {} products from {url}", count_of(&detection));
     Ok(count_of(&detection))
 }
 
@@ -764,6 +709,7 @@ impl Reporter for StdoutReporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use price_hunter::terminal::{confirm, confirm_key};
 
     fn args(rest: &[&str]) -> Vec<String> {
         std::iter::once("pricehunter".to_string())
@@ -948,43 +894,43 @@ mod tests {
         );
     }
 
-#[test]
-fn flags_win_over_a_bare_url() {
-    assert_eq!(
-        parse(&args(&["-matrix-server", "https://example.com"])),
-        Command::MatrixServer
-    );
-}
+    #[test]
+    fn flags_win_over_a_bare_url() {
+        assert_eq!(
+            parse(&args(&["-matrix-server", "https://example.com"])),
+            Command::MatrixServer
+        );
+    }
 
-#[test]
-fn yes_flag_does_not_select_a_command() {
-    assert_eq!(
-        parse(&args(&["-delete-unbranded", "-yes"])),
-        Command::DeleteUnbranded
-    );
-    assert_eq!(
-        parse(&args(&["-y", "-delete-unbranded"])),
-        Command::DeleteUnbranded
-    );
-}
+    #[test]
+    fn yes_flag_does_not_select_a_command() {
+        assert_eq!(
+            parse(&args(&["-delete-unbranded", "-yes"])),
+            Command::DeleteUnbranded
+        );
+        assert_eq!(
+            parse(&args(&["-y", "-delete-unbranded"])),
+            Command::DeleteUnbranded
+        );
+    }
 
-#[test]
-fn wants_yes_recognizes_yes_and_y() {
-    assert!(wants_yes(&args(&["-delete-unbranded", "-yes"])));
-    assert!(wants_yes(&args(&["-delete-unbranded", "-y"])));
-    assert!(!wants_yes(&args(&["-delete-unbranded"])));
-    assert!(!wants_yes(&args(&[])));
-}
+    #[test]
+    fn wants_yes_recognizes_yes_and_y() {
+        assert!(wants_yes(&args(&["-delete-unbranded", "-yes"])));
+        assert!(wants_yes(&args(&["-delete-unbranded", "-y"])));
+        assert!(!wants_yes(&args(&["-delete-unbranded"])));
+        assert!(!wants_yes(&args(&[])));
+    }
 
-#[test]
-fn confirm_with_yes_returns_true_without_reading_stdin() {
-    assert!(confirm("Delete these rows? [y/N]", true).unwrap());
-}
+    #[test]
+    fn confirm_with_yes_returns_true_without_reading_stdin() {
+        assert!(confirm("Delete these rows? [y/N]", true).unwrap());
+    }
 
-#[test]
-fn confirm_key_with_yes_returns_true_without_reading_stdin() {
-    assert!(confirm_key("Insert as canonical product? (y/N)", true).unwrap());
-}
+    #[test]
+    fn confirm_key_with_yes_returns_true_without_reading_stdin() {
+        assert!(confirm_key("Insert as canonical product? (y/N)", true).unwrap());
+    }
 
     #[test]
     fn flag_precedence_follows_the_fixed_order() {

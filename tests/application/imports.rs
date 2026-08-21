@@ -40,8 +40,11 @@ fn propose_unmatched_splits_brand_size_and_skips_linked_existing_and_duplicates(
     fake.products
         .push(product("p1", "Diesel Fuel For Life EDT 125 ml"));
 
-    fake.provider_products
-        .push(provider_product("pp1", "Moschino Gold Fresh Couture EDP 100 Ml", None));
+    fake.provider_products.push(provider_product(
+        "pp1",
+        "Moschino Gold Fresh Couture EDP 100 Ml",
+        None,
+    ));
     fake.provider_products
         .push(provider_product("pp2", "Whatever EDP 50 ml", Some("p9")));
     fake.provider_products.push(provider_product(
@@ -54,7 +57,8 @@ fn propose_unmatched_splits_brand_size_and_skips_linked_existing_and_duplicates(
         "MOSCHINO GOLD FRESH COUTURE EDP 100 ML",
         None,
     ));
-    fake.provider_products.push(provider_product("pp5", "132 g", None));
+    fake.provider_products
+        .push(provider_product("pp5", "132 g", None));
     fake.provider_products.push(provider_product(
         "pp6",
         "Diesel Fuel For Life EDT 125 ml",
@@ -93,11 +97,21 @@ fn create_product_records_and_reports_already_exists() {
     let fake = FakeStore::default();
 
     let first = fake
-        .create_product("moschino", "Gold Fresh Couture EDP", "moschino Gold Fresh Couture EDP 100 ml", "100 ml")
+        .create_product(
+            "moschino",
+            "Gold Fresh Couture EDP",
+            "moschino Gold Fresh Couture EDP 100 ml",
+            "100 ml",
+        )
         .expect("create should succeed");
     assert_eq!(first, ProductInsert::Created);
     let second = fake
-        .create_product("moschino", "Gold Fresh Couture EDP", "moschino Gold Fresh Couture EDP 100 ml", "100 ml")
+        .create_product(
+            "moschino",
+            "Gold Fresh Couture EDP",
+            "moschino Gold Fresh Couture EDP 100 ml",
+            "100 ml",
+        )
         .expect("create should succeed");
     assert_eq!(second, ProductInsert::AlreadyExists);
     assert_eq!(

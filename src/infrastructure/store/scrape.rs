@@ -12,9 +12,9 @@ use super::error::Error;
 use super::http::{escape_filter, host_of};
 use super::types::{
     PROVIDER_PRODUCT_IMAGES_COLLECTION, PROVIDER_PRODUCT_PRICES_COLLECTION,
-    PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION, ProductImagePayload,
-    ProductImageRow, ProviderPayload, ProviderPricePayload, ProviderProductPayload,
-    SCRAPES_COLLECTION, ScrapePayload, ScrapeRow,
+    PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION, ProductImagePayload, ProductImageRow,
+    ProviderPayload, ProviderPricePayload, ProviderProductPayload, SCRAPES_COLLECTION,
+    ScrapePayload, ScrapeRow,
 };
 
 /// Generic page shape for a pooled list request.
@@ -56,7 +56,13 @@ impl Store {
         total_product_count: usize,
         products: &[Product],
     ) -> Result<(), Error> {
-        self.save_incremental_inner(url, captured_at, capture_path, total_product_count, products)?;
+        self.save_incremental_inner(
+            url,
+            captured_at,
+            capture_path,
+            total_product_count,
+            products,
+        )?;
         Ok(())
     }
 
@@ -76,8 +82,14 @@ impl Store {
             .first()
             .cloned()
             .unwrap_or_default();
-        let scrape =
-            self.create_scrape(url, captured_at, capture_path, &provider.id, detection.products.len(), &container_class)?;
+        let scrape = self.create_scrape(
+            url,
+            captured_at,
+            capture_path,
+            &provider.id,
+            detection.products.len(),
+            &container_class,
+        )?;
         self.save_products(&provider, &scrape.id, &detection.products)?;
         Ok(())
     }
@@ -172,13 +184,8 @@ impl Store {
         for product in products {
             // A single bad product must not drop the rest of the capture: log
             // and move on so the other products still land.
-            if let Err(e) = self.save_product(
-                provider,
-                scrape_id,
-                product,
-                &by_name,
-                &mut new_ids,
-            ) {
+            if let Err(e) = self.save_product(provider, scrape_id, product, &by_name, &mut new_ids)
+            {
                 log::error!("could not persist product {:?}: {e:#}", product.name);
             }
         }
@@ -275,11 +282,8 @@ impl Store {
             escape_filter(provider_product_id),
             escape_filter(scrape_id)
         );
-        let idem_url = self.records_url(
-            PROVIDER_PRODUCT_PRICES_COLLECTION,
-            Some(&idempotency),
-            1,
-        )?;
+        let idem_url =
+            self.records_url(PROVIDER_PRODUCT_PRICES_COLLECTION, Some(&idempotency), 1)?;
         let existing = self.agent_get_json::<Page<super::types::PriceRow>>(&idem_url)?;
         if let Some(row) = existing.items.into_iter().next() {
             self.agent_patch_json::<serde_json::Value>(
@@ -290,7 +294,10 @@ impl Store {
         }
         let last_url = self.records_url_sorted(
             PROVIDER_PRODUCT_PRICES_COLLECTION,
-            &format!("provider_product_id='{}'", escape_filter(provider_product_id)),
+            &format!(
+                "provider_product_id='{}'",
+                escape_filter(provider_product_id)
+            ),
             "-created",
             1,
         )?;
@@ -371,7 +378,8 @@ impl Store {
         let mut items = Vec::new();
         let mut page = 1;
         loop {
-            let url = self.records_url_paged(PROVIDER_PRODUCTS_COLLECTION, Some(&filter), 100, page)?;
+            let url =
+                self.records_url_paged(PROVIDER_PRODUCTS_COLLECTION, Some(&filter), 100, page)?;
             let loaded = self.agent_get_json::<Page<ProviderProductRow>>(&url)?;
             let count = loaded.items.len();
             items.extend(loaded.items);
@@ -387,7 +395,10 @@ impl Store {
 
     /// The base `.../api/collections/{collection}/records` URL.
     fn collection_url(&self, collection: &str) -> String {
-        format!("{}/api/collections/{collection}/records", self.client.base_url)
+        format!(
+            "{}/api/collections/{collection}/records",
+            self.client.base_url
+        )
     }
 
     /// A `.../records/{id}` URL.
@@ -415,7 +426,8 @@ impl Store {
     ) -> Result<String> {
         let mut url = url::Url::parse(&self.collection_url(collection))
             .context("could not parse records url")?;
-        url.query_pairs_mut().append_pair("perPage", &per_page.to_string());
+        url.query_pairs_mut()
+            .append_pair("perPage", &per_page.to_string());
         url.query_pairs_mut().append_pair("page", &page.to_string());
         if let Some(filter) = filter {
             url.query_pairs_mut().append_pair("filter", filter);
@@ -433,7 +445,8 @@ impl Store {
     ) -> Result<String> {
         let mut url = url::Url::parse(&self.collection_url(collection))
             .context("could not parse records url")?;
-        url.query_pairs_mut().append_pair("perPage", &per_page.to_string());
+        url.query_pairs_mut()
+            .append_pair("perPage", &per_page.to_string());
         url.query_pairs_mut().append_pair("page", "1");
         url.query_pairs_mut().append_pair("filter", filter);
         url.query_pairs_mut().append_pair("sort", sort);
@@ -457,7 +470,8 @@ impl Store {
             .set("Authorization", &token)
             .call()
             .map_err(|e| anyhow::anyhow!("GET {url}: {e}"))?;
-        res.into_json().map_err(|e| anyhow::anyhow!("GET {url}: bad JSON: {e}"))
+        res.into_json()
+            .map_err(|e| anyhow::anyhow!("GET {url}: bad JSON: {e}"))
     }
 
     /// Pooled POST that deserializes the JSON response.
@@ -470,7 +484,8 @@ impl Store {
             .set("Content-Type", "application/json")
             .send_string(body)
             .map_err(|e| anyhow::anyhow!("POST {url}: {e}"))?;
-        res.into_json().map_err(|e| anyhow::anyhow!("POST {url}: bad JSON: {e}"))
+        res.into_json()
+            .map_err(|e| anyhow::anyhow!("POST {url}: bad JSON: {e}"))
     }
 
     /// Pooled PATCH that deserializes the JSON response.
@@ -483,7 +498,8 @@ impl Store {
             .set("Content-Type", "application/json")
             .send_string(body)
             .map_err(|e| anyhow::anyhow!("PATCH {url}: {e}"))?;
-        res.into_json().map_err(|e| anyhow::anyhow!("PATCH {url}: bad JSON: {e}"))
+        res.into_json()
+            .map_err(|e| anyhow::anyhow!("PATCH {url}: bad JSON: {e}"))
     }
 
     /// Pooled DELETE; a 404 counts as success.
@@ -496,7 +512,9 @@ impl Store {
                     return Ok(());
                 }
                 let detail = response.into_string().unwrap_or_default();
-                Err(anyhow::anyhow!("DELETE {url}: HTTP {status} body: {detail}"))
+                Err(anyhow::anyhow!(
+                    "DELETE {url}: HTTP {status} body: {detail}"
+                ))
             }
             Err(e) => Err(anyhow::anyhow!("DELETE {url}: {e}")),
         }

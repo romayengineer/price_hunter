@@ -309,11 +309,23 @@ mod tests {
 
     #[test]
     fn split_size_extracts_trailing_ml_size() {
-        assert_eq!(split_size("Gold Fresh Couture EDP 100 Ml"), ("Gold Fresh Couture EDP".to_string(), Some("100 ml".into())));
-        assert_eq!(split_size("edp 50"), ("edp".to_string(), Some("50 ml".into())));
-        assert_eq!(split_size("PAULVIC WOMAN X50ML"), ("PAULVIC WOMAN X".to_string(), Some("50 ml".into())));
+        assert_eq!(
+            split_size("Gold Fresh Couture EDP 100 Ml"),
+            ("Gold Fresh Couture EDP".to_string(), Some("100 ml".into()))
+        );
+        assert_eq!(
+            split_size("edp 50"),
+            ("edp".to_string(), Some("50 ml".into()))
+        );
+        assert_eq!(
+            split_size("PAULVIC WOMAN X50ML"),
+            ("PAULVIC WOMAN X".to_string(), Some("50 ml".into()))
+        );
         assert_eq!(split_size("132 g"), ("".to_string(), Some("132 g".into())));
-        assert_eq!(split_size("One Million EDT"), ("One Million EDT".to_string(), None));
+        assert_eq!(
+            split_size("One Million EDT"),
+            ("One Million EDT".to_string(), None)
+        );
         // A bare number in the middle is not a size.
         assert_eq!(
             split_size("set 212 men edt 100 + deo"),
@@ -323,12 +335,18 @@ mod tests {
 
     #[test]
     fn strip_brand_removes_case_insensitively() {
-        assert_eq!(strip_brand("Adidas Vibes Smooth Pace", "adidas"), "Vibes Smooth Pace");
+        assert_eq!(
+            strip_brand("Adidas Vibes Smooth Pace", "adidas"),
+            "Vibes Smooth Pace"
+        );
         assert_eq!(
             strip_brand("Dolce & Gabbana Original EDT", "dolce & gabbana"),
             "Original EDT"
         );
-        assert_eq!(strip_brand("Carolina Herrera 212 Vip", "carolina herrera"), "212 Vip");
+        assert_eq!(
+            strip_brand("Carolina Herrera 212 Vip", "carolina herrera"),
+            "212 Vip"
+        );
         assert_eq!(strip_brand("Plain Name", "diesel"), "Plain Name");
         assert_eq!(strip_brand("  spaced   out  ", ""), "spaced out");
     }

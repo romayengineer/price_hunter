@@ -280,7 +280,10 @@ fn vtex_brand_container_is_prepended_when_missing_from_name() {
         "##;
     let detection = detect_grid(html).expect("grid should be detected");
     // Brand from the VTEX productBrandName element is prepended.
-    assert_eq!(detection.products[0].name, "Moschino Gold Fresh Couture EDP");
+    assert_eq!(
+        detection.products[0].name,
+        "Moschino Gold Fresh Couture EDP"
+    );
     // Brand already present in the name is not duplicated.
     assert_eq!(detection.products[1].name, "Adidas Vibes Smooth Pace EDP");
     // No brand element (only the productBrand/brandName name span) -> unchanged.
@@ -309,10 +312,7 @@ fn magento_brand_strong_is_prepended_when_missing_from_name() {
         "##;
     let detection = detect_grid(html).expect("grid should be detected");
     assert_eq!(detection.products[0].name, "RABANNE FAME COUTURE EDP 80ML");
-    assert_eq!(
-        detection.products[1].name,
-        "CALVIN KLEIN CK ONE EDT 100ML"
-    );
+    assert_eq!(detection.products[1].name, "CALVIN KLEIN CK ONE EDT 100ML");
 }
 
 #[test]

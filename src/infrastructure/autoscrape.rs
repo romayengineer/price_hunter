@@ -14,6 +14,31 @@ use anyhow::Result;
 use async_trait::async_trait;
 use thirtyfour::prelude::*;
 
+/// Minimal driver abstraction so `WindowedAutoScraper` can be tested offline
+/// with a fake driver that serves synthetic HTML and records `goto` calls.
+#[async_trait]
+pub trait DriverPage: Send + Sync {
+    /// The current page URL.
+    async fn current_url(&self) -> Result<String>;
+    /// The current page HTML source.
+    async fn source(&self) -> Result<String>;
+    /// Navigates to `url`.
+    async fn goto(&self, url: &str) -> Result<()>;
+}
+
+#[async_trait]
+impl DriverPage for WebDriver {
+    async fn current_url(&self) -> Result<String> {
+        Ok(self.current_url().await?.to_string())
+    }
+    async fn source(&self) -> Result<String> {
+        Ok(self.source().await?)
+    }
+    async fn goto(&self, url: &str) -> Result<()> {
+        Ok(self.goto(url).await?)
+    }
+}
+
 use crate::domain::detect::{self, Detection};
 
 static WINDOW_RELOADED: AtomicBool = AtomicBool::new(false);
@@ -302,15 +327,11 @@ impl AutoScraper for WindowedAutoScraper {
 
 impl WindowedAutoScraper {
     #[allow(clippy::cognitive_complexity)]
-    async fn try_reload_if_needed(&mut self, driver: &WebDriver) -> Result<bool> {
+    async fn try_reload_if_needed<D: DriverPage>(&mut self, driver: &D) -> Result<bool> {
         if self.threshold == 0 {
             return Ok(false);
         }
-        let current_url = driver
-            .current_url()
-            .await
-            .map(|u| u.to_string())
-            .unwrap_or_default();
+        let current_url = driver.current_url().await.unwrap_or_default();
         if !url_contains_page_param(&current_url, &self.param) {
             return Ok(false);
         }
@@ -342,12 +363,8 @@ impl WindowedAutoScraper {
     }
 }
 
-async fn peek_count(driver: &WebDriver) -> Result<usize> {
-    let url = driver
-        .current_url()
-        .await
-        .map(|u| u.to_string())
-        .unwrap_or_default();
+async fn peek_count<D: DriverPage>(driver: &D) -> Result<usize> {
+    let url = driver.current_url().await.unwrap_or_default();
     let source = driver.source().await?;
     let count = detect::detect_grid(&source)
         .map(|d| d.products.len())
@@ -712,8 +729,12 @@ async fn scroll_y(driver: &WebDriver) -> Result<f64> {
 
 #[cfg(test)]
 #[allow(clippy::cognitive_complexity)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    static WINDOW_TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
     #[test]
     fn page_url_appends_param_preserving_query() {
@@ -917,5 +938,159 @@ mod tests {
             ..AutoScrapeOptions::default()
         };
         assert_eq!(opts_zero.window_threshold(), 0);
+    }
+
+    // --- Offline fake driver for window-reload tests ---
+
+    use std::sync::Mutex;
+
+    struct FakeDriver {
+        url: Mutex<String>,
+        html: String,
+        goto_log: Mutex<Vec<String>>,
+    }
+
+    impl FakeDriver {
+        fn with_products(url: &str, n: usize) -> Self {
+            Self {
+                url: Mutex::new(url.to_string()),
+                html: fake_html(n),
+                goto_log: Mutex::new(Vec::new()),
+            }
+        }
+        #[allow(dead_code)]
+        fn with_html(url: &str, html: String) -> Self {
+            Self {
+                url: Mutex::new(url.to_string()),
+                html,
+                goto_log: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DriverPage for FakeDriver {
+        async fn current_url(&self) -> Result<String> {
+            Ok(self.url.lock().unwrap().clone())
+        }
+        async fn source(&self) -> Result<String> {
+            Ok(self.html.clone())
+        }
+        async fn goto(&self, url: &str) -> Result<()> {
+            *self.url.lock().unwrap() = url.to_string();
+            self.goto_log.lock().unwrap().push(url.to_string());
+            Ok(())
+        }
+    }
+
+    struct NoopScraper;
+    #[async_trait::async_trait]
+    impl AutoScraper for NoopScraper {
+        async fn next(&mut self, _driver: &WebDriver) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    fn fake_html(n: usize) -> String {
+        let mut cards = String::new();
+        for i in 0..n {
+            cards.push_str(&format!(
+                r#"<div class="card"><a href="/p{i}">Product {i}</a><span class="price">${}.00</span></div>"#,
+                10 + i
+            ));
+        }
+        format!(
+            r#"<html><body><div class="product-grid">{cards}</div></body></html>"#
+        )
+    }
+
+    fn reset_window_state() {
+        WINDOW_RELOADED.store(false, Ordering::SeqCst);
+    }
+
+    #[tokio::test]
+    async fn window_reload_fires_at_threshold() {
+        let _guard = WINDOW_TEST_LOCK.lock().unwrap();
+        reset_window_state();
+        let driver = FakeDriver::with_products("https://example.com/list?page=8", 120);
+        let mut scraper = WindowedAutoScraper::new(Box::new(NoopScraper), "page".to_string(), 120);
+        // should trigger reload via try_reload_if_needed (live DOM total >= threshold)
+        let reloaded = scraper.try_reload_if_needed(&driver).await.unwrap();
+        assert!(reloaded, "expected reload when 120 >= 120");
+        assert_eq!(driver.goto_log.lock().unwrap().len(), 1);
+        assert_eq!(driver.goto_log.lock().unwrap()[0], "https://example.com/list?page=8");
+        assert!(WINDOW_RELOADED.load(Ordering::SeqCst));
+        assert!(scraper.reloaded.contains(&8));
+    }
+
+    #[tokio::test]
+    async fn window_no_reload_under_threshold() {
+        let _guard = WINDOW_TEST_LOCK.lock().unwrap();
+        reset_window_state();
+        let driver = FakeDriver::with_products("https://example.com/list?page=8", 119);
+        let mut scraper = WindowedAutoScraper::new(Box::new(NoopScraper), "page".to_string(), 120);
+        let reloaded = scraper.try_reload_if_needed(&driver).await.unwrap();
+        assert!(!reloaded, "should not reload when 119 < 120");
+        assert!(driver.goto_log.lock().unwrap().is_empty());
+        assert!(!WINDOW_RELOADED.load(Ordering::SeqCst));
+        assert!(!scraper.reloaded.contains(&8));
+    }
+
+    #[tokio::test]
+    async fn window_already_reloaded_page_skips() {
+        let _guard = WINDOW_TEST_LOCK.lock().unwrap();
+        reset_window_state();
+        let driver = FakeDriver::with_products("https://example.com/list?page=8", 120);
+        let mut scraper = WindowedAutoScraper::new(Box::new(NoopScraper), "page".to_string(), 120);
+        // first reload
+        assert!(scraper.try_reload_if_needed(&driver).await.unwrap());
+        assert_eq!(driver.goto_log.lock().unwrap().len(), 1);
+        // WINDOW_RELOADED was set, reset to simulate detect_products consuming it
+        WINDOW_RELOADED.store(false, Ordering::SeqCst);
+        // second call with same page should not reload again (once per page)
+        let second = scraper.try_reload_if_needed(&driver).await.unwrap();
+        assert!(!second, "second reload on same page should be skipped");
+        assert_eq!(driver.goto_log.lock().unwrap().len(), 1, "no second goto");
+    }
+
+    #[tokio::test]
+    async fn window_reload_exact_same_url_preserving_params() {
+        let _guard = WINDOW_TEST_LOCK.lock().unwrap();
+        reset_window_state();
+        let driver = FakeDriver::with_products(
+            "https://example.com/list?sort=price&page=8&foo=bar",
+            120,
+        );
+        let mut scraper = WindowedAutoScraper::new(Box::new(NoopScraper), "page".to_string(), 120);
+        let reloaded = scraper.try_reload_if_needed(&driver).await.unwrap();
+        assert!(reloaded);
+        // should preserve other query params and replace page param at end
+        assert_eq!(
+            driver.goto_log.lock().unwrap()[0],
+            "https://example.com/list?sort=price&foo=bar&page=8"
+        );
+        assert!(WINDOW_RELOADED.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn window_no_reload_without_page_param() {
+        let _guard = WINDOW_TEST_LOCK.lock().unwrap();
+        reset_window_state();
+        let driver = FakeDriver::with_products("https://example.com/list?sort=price", 200);
+        let mut scraper = WindowedAutoScraper::new(Box::new(NoopScraper), "page".to_string(), 120);
+        let reloaded = scraper.try_reload_if_needed(&driver).await.unwrap();
+        assert!(!reloaded, "no page param -> no reload even if 200 >=120");
+        assert!(driver.goto_log.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn window_threshold_zero_disables() {
+        let _guard = WINDOW_TEST_LOCK.lock().unwrap();
+        reset_window_state();
+        let driver = FakeDriver::with_products("https://example.com/list?page=8", 200);
+        let mut scraper = WindowedAutoScraper::new(Box::new(NoopScraper), "page".to_string(), 0);
+        let reloaded = scraper.try_reload_if_needed(&driver).await.unwrap();
+        assert!(!reloaded, "threshold 0 disables");
+        assert!(driver.goto_log.lock().unwrap().is_empty());
     }
 }

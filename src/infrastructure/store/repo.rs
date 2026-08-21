@@ -19,7 +19,9 @@ use crate::domain::model::{
     BrandRow, MatchInsert, ProductInsert, ProductRow, ProviderMatchRow, ProviderProductRow,
     ProviderRow,
 };
-use crate::domain::ports::PriceStore;
+use crate::domain::ports::{
+    BrandCatalog, MatchStore, PriceHistory, ProductCatalog, ProviderCatalog,
+};
 
 impl Store {
     /// Lists every record of `collection` with an optional filter and sort,
@@ -188,7 +190,7 @@ impl Store {
     }
 }
 
-impl PriceStore for Store {
+impl ProductCatalog for Store {
     fn list_products(&self) -> Result<Vec<ProductRow>, PriceStoreError> {
         Ok(self.list_all(PRODUCTS_COLLECTION, Some("active=true"), None, 100)?)
     }
@@ -197,18 +199,97 @@ impl PriceStore for Store {
         Ok(self.list_all(PRODUCTS_COLLECTION, None, None, 100)?)
     }
 
-    fn list_provider_products(&self) -> Result<Vec<ProviderProductRow>, PriceStoreError> {
-        Ok(self.list_all(PROVIDER_PRODUCTS_COLLECTION, None, None, 100)?)
+    /// Inserts one canonical product (active) unless a product with the same
+    /// `(brand, product_name, size)` already exists.
+    fn create_product(
+        &self,
+        brand: &str,
+        product_name: &str,
+        name: &str,
+        size: &str,
+    ) -> Result<ProductInsert, PriceStoreError> {
+        let filter = format!(
+            "brand='{}' && product_name='{}' && size='{}'",
+            escape_filter(brand),
+            escape_filter(product_name),
+            escape_filter(size)
+        );
+        let existing = self
+            .client
+            .records(PRODUCTS_COLLECTION)
+            .list()
+            .filter(&filter)
+            .per_page(1)
+            .call::<ProductImportRow>()
+            .context("could not look up product")?;
+        if existing.items.into_iter().next().is_some() {
+            return Ok(ProductInsert::AlreadyExists);
+        }
+        self.client
+            .records(PRODUCTS_COLLECTION)
+            .create(ProductImportPayload {
+                brand: brand.to_string(),
+                product_name: product_name.to_string(),
+                name: name.to_string(),
+                size: size.to_string(),
+                category: String::new(),
+                active: true,
+            })
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not create product: {e}"))?;
+        Ok(ProductInsert::Created)
     }
+}
 
+impl BrandCatalog for Store {
+    fn list_brands(&self) -> Result<Vec<BrandRow>, PriceStoreError> {
+        Ok(self.list_all(BRANDS_COLLECTION, None, None, 500)?)
+    }
+}
+
+impl ProviderCatalog for Store {
     fn list_providers(&self) -> Result<Vec<ProviderRow>, PriceStoreError> {
         Ok(self.list_all(PROVIDERS_COLLECTION, None, None, 100)?)
     }
 
-    fn list_brands(&self) -> Result<Vec<BrandRow>, PriceStoreError> {
-        Ok(self.list_all(BRANDS_COLLECTION, None, None, 500)?)
+    fn list_provider_products(&self) -> Result<Vec<ProviderProductRow>, PriceStoreError> {
+        Ok(self.list_all(PROVIDER_PRODUCTS_COLLECTION, None, None, 100)?)
     }
 
+    fn update_brand_link(
+        &self,
+        provider_product_id: &str,
+        brand_id: Option<&str>,
+    ) -> Result<(), PriceStoreError> {
+        self.client
+            .records(PROVIDER_PRODUCTS_COLLECTION)
+            .update(
+                provider_product_id,
+                BrandLinkPayload {
+                    brand_id: brand_id.map(str::to_owned),
+                },
+            )
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not update brand link: {e}"))?;
+        Ok(())
+    }
+
+    /// Deletes a provider product after removing its match candidates,
+    /// images and price history (PocketBase has no cascade deletes).
+    fn delete_provider_product(&self, provider_product_id: &str) -> Result<(), PriceStoreError> {
+        for collection in [
+            PROVIDER_PRODUCT_MATCHES_COLLECTION,
+            PROVIDER_PRODUCT_IMAGES_COLLECTION,
+            PROVIDER_PRODUCT_PRICES_COLLECTION,
+        ] {
+            self.delete_related(collection, provider_product_id)?;
+        }
+        self.agent_destroy(PROVIDER_PRODUCTS_COLLECTION, provider_product_id)?;
+        Ok(())
+    }
+}
+
+impl MatchStore for Store {
     fn list_above_threshold_candidates(&self) -> Result<Vec<MatchCandidate>, PriceStoreError> {
         let filter = format!("score>={MIN_SCORE}");
         let rows = self.list_all::<ProviderMatchRow>(
@@ -372,80 +453,9 @@ impl PriceStore for Store {
         self.mark_confirmed(winner)?;
         Ok(())
     }
+}
 
-    fn update_brand_link(
-        &self,
-        provider_product_id: &str,
-        brand_id: Option<&str>,
-    ) -> Result<(), PriceStoreError> {
-        self.client
-            .records(PROVIDER_PRODUCTS_COLLECTION)
-            .update(
-                provider_product_id,
-                BrandLinkPayload {
-                    brand_id: brand_id.map(str::to_owned),
-                },
-            )
-            .call()
-            .map_err(|e| anyhow::anyhow!("could not update brand link: {e}"))?;
-        Ok(())
-    }
-
-    /// Deletes a provider product after removing its match candidates,
-    /// images and price history (PocketBase has no cascade deletes).
-    fn delete_provider_product(&self, provider_product_id: &str) -> Result<(), PriceStoreError> {
-        for collection in [
-            PROVIDER_PRODUCT_MATCHES_COLLECTION,
-            PROVIDER_PRODUCT_IMAGES_COLLECTION,
-            PROVIDER_PRODUCT_PRICES_COLLECTION,
-        ] {
-            self.delete_related(collection, provider_product_id)?;
-        }
-        self.agent_destroy(PROVIDER_PRODUCTS_COLLECTION, provider_product_id)?;
-        Ok(())
-    }
-
-    /// Inserts one canonical product (active) unless a product with the same
-    /// `(brand, product_name, size)` already exists.
-    fn create_product(
-        &self,
-        brand: &str,
-        product_name: &str,
-        name: &str,
-        size: &str,
-    ) -> Result<ProductInsert, PriceStoreError> {
-        let filter = format!(
-            "brand='{}' && product_name='{}' && size='{}'",
-            escape_filter(brand),
-            escape_filter(product_name),
-            escape_filter(size)
-        );
-        let existing = self
-            .client
-            .records(PRODUCTS_COLLECTION)
-            .list()
-            .filter(&filter)
-            .per_page(1)
-            .call::<ProductImportRow>()
-            .context("could not look up product")?;
-        if existing.items.into_iter().next().is_some() {
-            return Ok(ProductInsert::AlreadyExists);
-        }
-        self.client
-            .records(PRODUCTS_COLLECTION)
-            .create(ProductImportPayload {
-                brand: brand.to_string(),
-                product_name: product_name.to_string(),
-                name: name.to_string(),
-                size: size.to_string(),
-                category: String::new(),
-                active: true,
-            })
-            .call()
-            .map_err(|e| anyhow::anyhow!("could not create product: {e}"))?;
-        Ok(ProductInsert::Created)
-    }
-
+impl PriceHistory for Store {
     fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>, PriceStoreError> {
         let rows = self.list_all::<ProviderPriceRow>(
             PROVIDER_PRODUCT_PRICES_COLLECTION,

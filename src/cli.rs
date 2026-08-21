@@ -16,7 +16,7 @@ use price_hunter::capture;
 use price_hunter::config;
 use price_hunter::detect::{self, Detection, Product};
 use price_hunter::domain::model::ProductInsert;
-use price_hunter::domain::ports::PriceStore;
+use price_hunter::domain::ports::{BrandCatalog, ProductCatalog, ProviderCatalog};
 use price_hunter::export;
 use price_hunter::instance::InstanceGuard;
 use price_hunter::store::Store;

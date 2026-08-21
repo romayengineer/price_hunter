@@ -3,7 +3,7 @@
 
 use price_hunter::application::imports::propose_unmatched;
 use price_hunter::domain::model::{BrandRow, ProductInsert, ProductRow, ProviderProductRow};
-use price_hunter::domain::ports::PriceStore;
+use price_hunter::domain::ports::{PriceStore, ProductCatalog};
 
 use super::fakes::FakeStore;
 

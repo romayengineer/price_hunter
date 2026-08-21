@@ -5,7 +5,7 @@
 
 use price_hunter::application::brands::{match_brands, missing_brands, unbranded_products};
 use price_hunter::domain::model::{BrandRow, ProductRow, ProviderProductRow, ProviderRow};
-use price_hunter::domain::ports::PriceStore;
+use price_hunter::domain::ports::{PriceStore, ProviderCatalog};
 
 use super::fakes::FakeStore;
 

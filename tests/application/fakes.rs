@@ -11,7 +11,9 @@ use price_hunter::domain::model::{
     BrandRow, MatchInsert, ProductInsert, ProductRow, ProviderMatchRow, ProviderProductRow,
     ProviderRow,
 };
-use price_hunter::domain::ports::PriceStore;
+use price_hunter::domain::ports::{
+    BrandCatalog, MatchStore, PriceHistory, PriceStore, ProductCatalog, ProviderCatalog,
+};
 
 /// In-memory [`PriceStore`] for exercising the application use cases offline.
 #[derive(Default)]
@@ -94,7 +96,7 @@ impl FakeStore {
     }
 }
 
-impl PriceStore for FakeStore {
+impl ProductCatalog for FakeStore {
     fn list_products(&self) -> Result<Vec<ProductRow>, PriceStoreError> {
         self.check()?;
         Ok(self
@@ -114,21 +116,51 @@ impl PriceStore for FakeStore {
         self.list_products()
     }
 
-    fn list_provider_products(&self) -> Result<Vec<ProviderProductRow>, PriceStoreError> {
+    fn create_product(
+        &self,
+        brand: &str,
+        product_name: &str,
+        name: &str,
+        size: &str,
+    ) -> Result<ProductInsert, PriceStoreError> {
+        self.check()?;
+        let exists = self
+            .products
+            .iter()
+            .any(|p| p.name.eq_ignore_ascii_case(name))
+            || self
+                .created_products
+                .borrow()
+                .iter()
+                .any(|(_, _, _, n)| n.eq_ignore_ascii_case(name));
+        if exists {
+            return Ok(ProductInsert::AlreadyExists);
+        }
+        self.created_products.borrow_mut().push((
+            brand.to_string(),
+            product_name.to_string(),
+            size.to_string(),
+            name.to_string(),
+        ));
+        Ok(ProductInsert::Created)
+    }
+}
+
+impl BrandCatalog for FakeStore {
+    fn list_brands(&self) -> Result<Vec<BrandRow>, PriceStoreError> {
         self.check()?;
         Ok(self
-            .provider_products
+            .brands
             .iter()
-            .map(|p| ProviderProductRow {
-                id: p.id.clone(),
-                provider_id: p.provider_id.clone(),
-                name: p.name.clone(),
-                product_id: p.product_id.clone(),
-                brand_id: p.brand_id.clone(),
+            .map(|b| BrandRow {
+                id: b.id.clone(),
+                name: b.name.clone(),
             })
             .collect())
     }
+}
 
+impl ProviderCatalog for FakeStore {
     fn list_providers(&self) -> Result<Vec<ProviderRow>, PriceStoreError> {
         self.check()?;
         Ok(self
@@ -144,18 +176,43 @@ impl PriceStore for FakeStore {
             .collect())
     }
 
-    fn list_brands(&self) -> Result<Vec<BrandRow>, PriceStoreError> {
+    fn list_provider_products(&self) -> Result<Vec<ProviderProductRow>, PriceStoreError> {
         self.check()?;
         Ok(self
-            .brands
+            .provider_products
             .iter()
-            .map(|b| BrandRow {
-                id: b.id.clone(),
-                name: b.name.clone(),
+            .map(|p| ProviderProductRow {
+                id: p.id.clone(),
+                provider_id: p.provider_id.clone(),
+                name: p.name.clone(),
+                product_id: p.product_id.clone(),
+                brand_id: p.brand_id.clone(),
             })
             .collect())
     }
 
+    fn update_brand_link(
+        &self,
+        provider_product_id: &str,
+        brand_id: Option<&str>,
+    ) -> Result<(), PriceStoreError> {
+        self.check()?;
+        self.brand_links
+            .borrow_mut()
+            .insert(provider_product_id.to_string(), brand_id.map(str::to_owned));
+        Ok(())
+    }
+
+    fn delete_provider_product(&self, provider_product_id: &str) -> Result<(), PriceStoreError> {
+        self.check()?;
+        self.deleted_provider_products
+            .borrow_mut()
+            .push(provider_product_id.to_string());
+        Ok(())
+    }
+}
+
+impl MatchStore for FakeStore {
     fn list_above_threshold_candidates(&self) -> Result<Vec<MatchCandidate>, PriceStoreError> {
         self.check()?;
         Ok(self
@@ -224,56 +281,9 @@ impl PriceStore for FakeStore {
         }
         Ok(())
     }
+}
 
-    fn update_brand_link(
-        &self,
-        provider_product_id: &str,
-        brand_id: Option<&str>,
-    ) -> Result<(), PriceStoreError> {
-        self.check()?;
-        self.brand_links
-            .borrow_mut()
-            .insert(provider_product_id.to_string(), brand_id.map(str::to_owned));
-        Ok(())
-    }
-
-    fn delete_provider_product(&self, provider_product_id: &str) -> Result<(), PriceStoreError> {
-        self.check()?;
-        self.deleted_provider_products
-            .borrow_mut()
-            .push(provider_product_id.to_string());
-        Ok(())
-    }
-
-    fn create_product(
-        &self,
-        brand: &str,
-        product_name: &str,
-        name: &str,
-        size: &str,
-    ) -> Result<ProductInsert, PriceStoreError> {
-        self.check()?;
-        let exists = self
-            .products
-            .iter()
-            .any(|p| p.name.eq_ignore_ascii_case(name))
-            || self
-                .created_products
-                .borrow()
-                .iter()
-                .any(|(_, _, _, n)| n.eq_ignore_ascii_case(name));
-        if exists {
-            return Ok(ProductInsert::AlreadyExists);
-        }
-        self.created_products.borrow_mut().push((
-            brand.to_string(),
-            product_name.to_string(),
-            size.to_string(),
-            name.to_string(),
-        ));
-        Ok(ProductInsert::Created)
-    }
-
+impl PriceHistory for FakeStore {
     fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>, PriceStoreError> {
         self.check()?;
         Ok(self.latest_prices.clone())

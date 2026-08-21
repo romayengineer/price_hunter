@@ -238,7 +238,15 @@ fn page_url(base: &str, param: &str, page: u32) -> String {
 /// Sets `param=N` in `base`, preserving other query pairs. Replaces any
 /// existing `param` value instead of appending a duplicate.
 pub(crate) fn set_page_url(base: &str, param: &str, page: u32) -> String {
-    let mut url = url::Url::parse(base).expect("base URL is valid");
+    let mut url = match url::Url::parse(base) {
+        Ok(u) => u,
+        Err(_) => {
+            // Fallback for non-absolute or malformed base: simple query-string append
+            // without panicking (library paths must not panic on user input).
+            let sep = if base.contains('?') { "&" } else { "?" };
+            return format!("{base}{sep}{param}={page}");
+        }
+    };
     let other: Vec<(String, String)> = url
         .query_pairs()
         .filter(|(k, _)| k != param)

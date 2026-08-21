@@ -560,10 +560,12 @@ fn count_of(detection: &Option<Detection>) -> usize {
 /// PocketBase (delta only, `product_count = delta.len()`). A failed
 /// write/save is logged, never fatal — the scrape continues. In-memory only,
 /// so restarts re-emit all products as new.
+#[allow(clippy::cognitive_complexity)]
 fn persist_new_products(store: &Store, url: &str, new_products: &[Product]) {
     if new_products.is_empty() {
         return;
     }
+    log::info!("new products {}", new_products.len());
     let detection = Detection {
         container: price_hunter::detect::Container {
             classes: Vec::new(),
@@ -673,6 +675,7 @@ fn update_state(state: &mut LoopState, source: Option<String>) {
     }
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
     let Some(detection) = &state.detection else {
         return;
@@ -682,6 +685,7 @@ async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
     if delta.is_empty() {
         return;
     }
+    log::info!("new products {}", delta.len());
     let url = driver
         .current_url()
         .await

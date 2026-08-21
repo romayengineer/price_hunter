@@ -104,20 +104,11 @@ pub fn parse(args: &[String]) -> Command {
 
 /// Collects the `-auto-scrape` modifier flags (`-strategy`, `-button`,
 /// `-page-param`, `-window-threshold`, `-headless`) into [`AutoScrapeOptions`] for `url`.
-#[allow(clippy::cognitive_complexity)]
 fn parse_auto_scrape(rest: &[String], url: String) -> AutoScrapeOptions {
-    let strategy =
-        arg_after_string(rest, "-strategy").map(|s| match s.to_ascii_lowercase().as_str() {
-            "scroll-click" | "scroll_click" | "scrollclick" => StrategyKind::ScrollClick,
-            "infinite" | "infinite-scroll" | "scroll" => StrategyKind::InfiniteScroll,
-            "page" | "pagination" => StrategyKind::Page,
-            _ => StrategyKind::ScrollClick,
-        });
+    let strategy = arg_after_string(rest, "-strategy").map(parse_strategy_kind);
     let button = arg_after_string(rest, "-button");
     let page_param = arg_after_string(rest, "-page-param").unwrap_or_default();
-    let window_threshold = arg_after_string(rest, "-window-threshold")
-        .or_else(|| arg_after_string(rest, "-window"))
-        .and_then(|s| s.parse::<usize>().ok());
+    let window_threshold = parse_window_threshold(rest);
     let headless = rest.iter().any(|a| a == "-headless");
     AutoScrapeOptions {
         url,
@@ -127,6 +118,21 @@ fn parse_auto_scrape(rest: &[String], url: String) -> AutoScrapeOptions {
         headless,
         window_threshold,
     }
+}
+
+fn parse_strategy_kind(s: String) -> StrategyKind {
+    match s.to_ascii_lowercase().as_str() {
+        "scroll-click" | "scroll_click" | "scrollclick" => StrategyKind::ScrollClick,
+        "infinite" | "infinite-scroll" | "scroll" => StrategyKind::InfiniteScroll,
+        "page" | "pagination" => StrategyKind::Page,
+        _ => StrategyKind::ScrollClick,
+    }
+}
+
+fn parse_window_threshold(rest: &[String]) -> Option<usize> {
+    arg_after_string(rest, "-window-threshold")
+        .or_else(|| arg_after_string(rest, "-window"))
+        .and_then(|s| s.parse::<usize>().ok())
 }
 
 /// Whether the command line carries a global auto-accept flag (`-yes`/`-y`).
@@ -505,31 +511,46 @@ fn count_of(detection: &Option<Detection>) -> usize {
 /// PocketBase (delta only, `product_count = delta.len()`). A failed
 /// write/save is logged, never fatal — the scrape continues. In-memory only,
 /// so restarts re-emit all products as new.
-#[allow(clippy::cognitive_complexity)]
 fn persist_new_products(store: &Store, url: &str, new_products: &[Product]) {
     if new_products.is_empty() {
         return;
     }
     log::info!("new products {}", new_products.len());
-    let detection = Detection {
+    let detection = build_delta_detection(new_products);
+    let Some(path) = write_capture_or_log(url, &detection) else {
+        return;
+    };
+    persist_delta_or_log(store, url, &path, new_products);
+}
+
+fn build_delta_detection(new_products: &[Product]) -> Detection {
+    Detection {
         container: price_hunter::detect::Container {
             classes: Vec::new(),
             id: None,
             child_count: new_products.len(),
         },
         products: new_products.to_vec(),
-    };
-    let path = match capture::write_capture("captures", url, &detection) {
-        Ok(path) => path,
+    }
+}
+
+fn write_capture_or_log(url: &str, detection: &Detection) -> Option<std::path::PathBuf> {
+    match capture::write_capture("captures", url, detection) {
+        Ok(path) => Some(path),
         Err(e) => {
             log::error!("Could not write capture for {url}: {e}");
-            return;
+            None
         }
-    };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    }
+}
+
+fn persist_delta_or_log(
+    store: &Store,
+    url: &str,
+    path: &std::path::Path,
+    new_products: &[Product],
+) {
+    let now = price_hunter::domain::time::now_secs();
     match store.save_incremental(
         url,
         now,
@@ -620,12 +641,11 @@ fn update_state(state: &mut LoopState, source: Option<String>) {
     }
 }
 
-#[allow(clippy::cognitive_complexity)]
 async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
-    let Some(detection) = &state.detection else {
-        return;
+    let detection = match &state.detection {
+        Some(d) => d.clone(),
+        None => return,
     };
-    // Delta only: compute new products by full identity (in-memory seen).
     let delta = price_hunter::detect::product_delta(&detection.products, &mut state.seen);
     if delta.is_empty() {
         return;
@@ -636,22 +656,9 @@ async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
         .await
         .map(|u| u.to_string())
         .unwrap_or_default();
-    let mut container = detection.container.clone();
-    container.child_count = delta.len();
-    let delta_detection = Detection {
-        container,
-        products: delta.clone(),
-    };
-    let path = match capture::write_capture("captures", &url, &delta_detection) {
-        Ok(path) => path,
-        Err(e) => {
-            log::error!("Could not write capture for {url}: {e}");
-            // Roll back seen insertions for this failed batch so retry can emit again.
-            for p in &delta {
-                state.seen.remove(&p.delta_key());
-            }
-            return;
-        }
+    let delta_detection = build_capture_delta(&detection, &delta);
+    let Some(path) = write_capture_with_rollback(state, &delta, &delta_detection, &url) else {
+        return;
     };
     println!(
         "Captured {} new products (of {} total) to {}",
@@ -661,6 +668,33 @@ async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
     );
     let capture_path = path.display().to_string();
     persist_to_store(&state.store, &url, &capture_path, &delta_detection);
+}
+
+fn build_capture_delta(detection: &Detection, delta: &[Product]) -> Detection {
+    let mut container = detection.container.clone();
+    container.child_count = delta.len();
+    Detection {
+        container,
+        products: delta.to_vec(),
+    }
+}
+
+fn write_capture_with_rollback(
+    state: &mut LoopState,
+    delta: &[Product],
+    delta_detection: &Detection,
+    url: &str,
+) -> Option<std::path::PathBuf> {
+    match capture::write_capture("captures", url, delta_detection) {
+        Ok(path) => Some(path),
+        Err(e) => {
+            log::error!("Could not write capture for {url}: {e}");
+            for p in delta {
+                state.seen.remove(&p.delta_key());
+            }
+            None
+        }
+    }
 }
 
 fn persist_to_store(store: &Store, url: &str, capture_path: &str, detection: &Detection) {

@@ -16,6 +16,10 @@ use thirtyfour::prelude::*;
 
 /// Minimal driver abstraction so `WindowedAutoScraper` can be tested offline
 /// with a fake driver that serves synthetic HTML and records `goto` calls.
+/// Only compiled for tests to avoid `async_trait` double-boxing in production
+/// (see 3f35cac regression — `DriverPage` added generic `try_reload` boxed
+/// futures + `Windowed` unconditional wrapping → stack overflow on 5M pages).
+#[cfg(test)]
 #[async_trait]
 pub(crate) trait DriverPage: Send + Sync {
     /// The current page URL.
@@ -26,6 +30,7 @@ pub(crate) trait DriverPage: Send + Sync {
     async fn goto(&self, url: &str) -> Result<()>;
 }
 
+#[cfg(test)]
 #[async_trait]
 impl DriverPage for WebDriver {
     async fn current_url(&self) -> Result<String> {
@@ -333,33 +338,89 @@ impl AutoScraper for WindowedAutoScraper {
 }
 
 impl WindowedAutoScraper {
-    #[allow(clippy::cognitive_complexity)]
-    async fn try_reload_if_needed<D: DriverPage>(&mut self, driver: &D) -> Result<bool> {
-        if self.threshold == 0 {
-            return Ok(false);
-        }
-        let current_url = driver.current_url().await.unwrap_or_default();
-        if !url_contains_page_param(&current_url, &self.param) {
+    #[cfg(not(test))]
+    async fn try_reload_if_needed(&mut self, driver: &WebDriver) -> Result<bool> {
+        let current_url = driver
+            .current_url()
+            .await
+            .map(|u| u.to_string())
+            .unwrap_or_default();
+        if self.is_disabled_or_missing_param(&current_url) {
             return Ok(false);
         }
         let total = peek_count(driver).await?;
-        if !should_window_reload(total, self.threshold, true) {
-            log::debug!(
-                "window: {total} products < threshold {}, continuing ({current_url})",
-                self.threshold
-            );
+        let page = extract_page(&current_url, &self.param).unwrap_or(1);
+        if self.should_skip_reload(total, page, &current_url) {
             return Ok(false);
         }
+        self.do_reload(&current_url, page, total, driver).await
+    }
+
+    #[cfg(test)]
+    async fn try_reload_if_needed<D: DriverPage>(&mut self, driver: &D) -> Result<bool> {
+        let current_url = driver.current_url().await.unwrap_or_default();
+        if self.is_disabled_or_missing_param(&current_url) {
+            return Ok(false);
+        }
+        let total = peek_count(driver).await?;
         let page = extract_page(&current_url, &self.param).unwrap_or(1);
+        if self.should_skip_reload(total, page, &current_url) {
+            return Ok(false);
+        }
+        self.do_reload(&current_url, page, total, driver).await
+    }
+
+    fn is_disabled_or_missing_param(&self, url: &str) -> bool {
+        self.threshold == 0 || !url_contains_page_param(url, &self.param)
+    }
+
+    fn should_skip_reload(&self, total: usize, page: u32, url: &str) -> bool {
+        if !should_window_reload(total, self.threshold, true) {
+            log::debug!(
+                "window: {total} products < threshold {}, continuing ({url})",
+                self.threshold
+            );
+            return true;
+        }
         if self.reloaded.contains(&page) {
             log::debug!(
                 "window: page {page} already reloaded, skipping same-url reload (total {total} >= {})",
                 self.threshold
             );
-            return Ok(false);
+            return true;
         }
+        false
+    }
+
+    #[cfg(not(test))]
+    async fn do_reload(
+        &mut self,
+        current_url: &str,
+        page: u32,
+        total: usize,
+        driver: &WebDriver,
+    ) -> Result<bool> {
         self.reloaded.insert(page);
-        let url = set_page_url(&current_url, &self.param, page);
+        let url = set_page_url(current_url, &self.param, page);
+        log::info!(
+            "memory optimization: reloading {url} (window threshold {} reached with {total} products)",
+            self.threshold
+        );
+        WINDOW_RELOADED.store(true, Ordering::SeqCst);
+        driver.goto(&url).await?;
+        Ok(true)
+    }
+
+    #[cfg(test)]
+    async fn do_reload<D: DriverPage>(
+        &mut self,
+        current_url: &str,
+        page: u32,
+        total: usize,
+        driver: &D,
+    ) -> Result<bool> {
+        self.reloaded.insert(page);
+        let url = set_page_url(current_url, &self.param, page);
         log::info!(
             "memory optimization: reloading {url} (window threshold {} reached with {total} products)",
             self.threshold
@@ -370,6 +431,22 @@ impl WindowedAutoScraper {
     }
 }
 
+#[cfg(not(test))]
+async fn peek_count(driver: &WebDriver) -> Result<usize> {
+    let url = driver
+        .current_url()
+        .await
+        .map(|u| u.to_string())
+        .unwrap_or_default();
+    let source = driver.source().await?;
+    let count = detect::detect_grid(&source)
+        .map(|d| d.products.len())
+        .unwrap_or(0);
+    log::debug!("window peek: {count} products on {url}");
+    Ok(count)
+}
+
+#[cfg(test)]
 async fn peek_count<D: DriverPage>(driver: &D) -> Result<usize> {
     let url = driver.current_url().await.unwrap_or_default();
     let source = driver.source().await?;
@@ -385,7 +462,10 @@ async fn peek_count<D: DriverPage>(driver: &D) -> Result<usize> {
 /// here so they get the right behavior out of the box.
 pub fn default_strategy(host: &str) -> StrategyKind {
     match host {
-        "www.parfumerie.com.ar" | "parfumerie.com.ar" => StrategyKind::InfiniteScroll,
+        "www.parfumerie.com.ar"
+        | "parfumerie.com.ar"
+        | "www.perfumeriasrouge.com"
+        | "perfumeriasrouge.com" => StrategyKind::InfiniteScroll,
         _ => StrategyKind::ScrollClick,
     }
 }
@@ -397,7 +477,8 @@ pub fn default_strategy(host: &str) -> StrategyKind {
 /// `-page-param`) at runtime, so the same page is reloaded once the product count
 /// reaches `window_threshold`, dropping earlier products from the DOM.
 pub fn strategy_for(url: &str, options: &AutoScrapeOptions) -> Box<dyn AutoScraper> {
-    let inner: Box<dyn AutoScraper> = match effective_strategy(url, options) {
+    let kind = effective_strategy(url, options);
+    let inner: Box<dyn AutoScraper> = match kind {
         StrategyKind::ScrollClick => Box::new(ScrollAndClick::new(options.button.clone())),
         StrategyKind::InfiniteScroll => Box::new(InfiniteScroll),
         StrategyKind::Page => Box::new(PageParam::new(
@@ -407,7 +488,9 @@ pub fn strategy_for(url: &str, options: &AutoScrapeOptions) -> Box<dyn AutoScrap
     };
     let threshold = options.window_threshold();
     let param = options.page_param_name();
-    if threshold != 0 {
+    let needs_window = threshold != 0
+        && (kind == StrategyKind::Page || url_contains_page_param(url, param));
+    if needs_window {
         Box::new(WindowedAutoScraper::new(
             inner,
             param.to_string(),

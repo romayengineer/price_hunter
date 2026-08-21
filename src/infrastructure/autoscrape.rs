@@ -281,41 +281,64 @@ impl WindowedAutoScraper {
 #[async_trait]
 impl AutoScraper for WindowedAutoScraper {
     async fn next(&mut self, driver: &WebDriver) -> Result<bool> {
-        if self.threshold != 0 {
-            let current_url = driver
-                .current_url()
-                .await
-                .map(|u| u.to_string())
-                .unwrap_or_default();
-            let has_page = url_contains_page_param(&current_url, &self.param);
-            if has_page {
-                let count = peek_count(driver).await?;
-                if should_window_reload(count, self.threshold, has_page) {
-                    let page = extract_page(&current_url, &self.param).unwrap_or(1);
-                    if self.reloaded.contains(&page) {
-                        log::debug!(
-                            "window: page {page} already reloaded, skipping same-url reload (total {count} >= {})",
-                            self.threshold
-                        );
-                    } else {
-                        self.reloaded.insert(page);
-                        let url = set_page_url(&current_url, &self.param, page);
-                        log::info!(
-                            "memory optimization: reloading {url} (window threshold {} reached with {count} products)",
-                            self.threshold
-                        );
-                        WINDOW_RELOADED.store(true, Ordering::SeqCst);
-                        driver.goto(&url).await?;
-                        return Ok(true);
-                    }
-                }
-                log::debug!(
-                    "window: {count} products < threshold {}, continuing ({current_url})",
-                    self.threshold
-                );
-            }
+        // Pre-click check: if DOM already large before advancing, reload immediately.
+        if self.try_reload_if_needed(driver).await? {
+            return Ok(true);
         }
-        self.inner.next(driver).await
+        let progressed = self.inner.next(driver).await?;
+        if !progressed {
+            return Ok(false);
+        }
+        // Post-growth check: immediately after the site action (live DOM total),
+        // so a batch that crosses 120 (e.g. 108 -> 126) triggers reload in the same step
+        // instead of one batch later. Brief sleep lets the page settle before peeking.
+        tokio::time::sleep(POLL_INTERVAL).await;
+        if self.try_reload_if_needed(driver).await? {
+            return Ok(true);
+        }
+        Ok(true)
+    }
+}
+
+impl WindowedAutoScraper {
+    #[allow(clippy::cognitive_complexity)]
+    async fn try_reload_if_needed(&mut self, driver: &WebDriver) -> Result<bool> {
+        if self.threshold == 0 {
+            return Ok(false);
+        }
+        let current_url = driver
+            .current_url()
+            .await
+            .map(|u| u.to_string())
+            .unwrap_or_default();
+        if !url_contains_page_param(&current_url, &self.param) {
+            return Ok(false);
+        }
+        let total = peek_count(driver).await?;
+        if !should_window_reload(total, self.threshold, true) {
+            log::debug!(
+                "window: {total} products < threshold {}, continuing ({current_url})",
+                self.threshold
+            );
+            return Ok(false);
+        }
+        let page = extract_page(&current_url, &self.param).unwrap_or(1);
+        if self.reloaded.contains(&page) {
+            log::debug!(
+                "window: page {page} already reloaded, skipping same-url reload (total {total} >= {})",
+                self.threshold
+            );
+            return Ok(false);
+        }
+        self.reloaded.insert(page);
+        let url = set_page_url(&current_url, &self.param, page);
+        log::info!(
+            "memory optimization: reloading {url} (window threshold {} reached with {total} products)",
+            self.threshold
+        );
+        WINDOW_RELOADED.store(true, Ordering::SeqCst);
+        driver.goto(&url).await?;
+        Ok(true)
     }
 }
 
@@ -344,9 +367,10 @@ pub fn default_strategy(host: &str) -> StrategyKind {
 }
 
 /// Builds the strategy for `url`, applying CLI overrides on top of the
-/// host-specific default. When `url` contains `?page=N` (or the custom
-/// `-page-param`), any non-Page strategy is wrapped with
-/// [`WindowedAutoScraper`] so the same page is reloaded once the product count
+/// host-specific default. Any strategy is wrapped with
+/// [`WindowedAutoScraper`] when windowing is enabled (`window_threshold != 0`);
+/// the wrapper itself checks `current_url` for `?page=N` (or custom
+/// `-page-param`) at runtime, so the same page is reloaded once the product count
 /// reaches `window_threshold`, dropping earlier products from the DOM.
 pub fn strategy_for(url: &str, options: &AutoScrapeOptions) -> Box<dyn AutoScraper> {
     let inner: Box<dyn AutoScraper> = match effective_strategy(url, options) {
@@ -358,7 +382,7 @@ pub fn strategy_for(url: &str, options: &AutoScrapeOptions) -> Box<dyn AutoScrap
     };
     let threshold = options.window_threshold();
     let param = options.page_param_name();
-    if threshold != 0 && url_contains_page_param(url, param) {
+    if threshold != 0 {
         Box::new(WindowedAutoScraper::new(inner, param.to_string(), threshold))
     } else {
         inner

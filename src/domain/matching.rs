@@ -116,32 +116,52 @@ fn normalize_size(number: &str, unit: &str) -> String {
     }
 }
 
-/// Scans a number (and optional unit) starting at index `i`, returning the
-/// number's start, the normalized size, and the index just past it when it is
-/// a recognizable size.
-#[allow(clippy::cognitive_complexity)]
-fn size_at(chars: &[char], i: usize) -> Option<(usize, String, usize)> {
-    let num_start = i;
-    let mut i = i;
+fn consume_digits(chars: &[char], start: usize) -> usize {
+    let mut i = start;
     while i < chars.len() && chars[i].is_ascii_digit() {
         i += 1;
     }
-    let number: String = chars[num_start..i].iter().collect();
-    let mut j = i;
-    if j < chars.len() && chars[j].is_whitespace() {
-        j += 1;
+    i
+}
+
+fn skip_one_space(chars: &[char], idx: usize) -> usize {
+    if idx < chars.len() && chars[idx].is_whitespace() {
+        idx + 1
+    } else {
+        idx
     }
-    let unit_start = j;
+}
+
+fn consume_alpha(chars: &[char], start: usize) -> usize {
+    let mut j = start;
     while j < chars.len() && chars[j].is_ascii_alphabetic() {
         j += 1;
     }
-    if unit_start < j {
-        let unit: String = chars[unit_start..j].iter().collect();
+    j
+}
+
+fn is_trailing_whitespace(chars: &[char], from: usize) -> bool {
+    from == chars.len() || chars[from..].iter().all(|c| c.is_whitespace())
+}
+
+/// Scans a number (and optional unit) starting at index `i`, returning the
+/// number's start, the normalized size, and the index just past it when it is
+/// a recognizable size.
+fn size_at(chars: &[char], i: usize) -> Option<(usize, String, usize)> {
+    let num_start = i;
+    let num_end = consume_digits(chars, i);
+    let number: String = chars[num_start..num_end].iter().collect();
+    let unit_start = skip_one_space(chars, num_end);
+    let unit_end = consume_alpha(chars, unit_start);
+    if unit_start < unit_end {
+        let unit: String = chars[unit_start..unit_end].iter().collect();
         if is_size_unit(&unit) {
-            return Some((num_start, normalize_size(&number, &unit), j));
+            return Some((num_start, normalize_size(&number, &unit), unit_end));
         }
-    } else if j == chars.len() || chars[j..].iter().all(|c| c.is_whitespace()) {
-        return Some((num_start, format!("{number} ml"), j));
+        return None;
+    }
+    if is_trailing_whitespace(chars, unit_end) {
+        return Some((num_start, format!("{number} ml"), unit_end));
     }
     None
 }

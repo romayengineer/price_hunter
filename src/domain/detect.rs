@@ -104,16 +104,9 @@ pub struct Detection {
 pub fn detect_grid(source: &str) -> Option<Detection> {
     let html = Html::parse_document(source);
     let price_divs = find_price_divs(&html);
-    log::debug!("detect_grid: {} price_divs found in {} chars", price_divs.len(), source.len());
     let (container_id, child_count) = best_container(&html, &price_divs)?;
     let container = build_container(&html, container_id, child_count);
     let products = extract_products(&html, container_id, &price_divs);
-    log::debug!(
-        "detect_grid: container classes={:?} id={:?}, {} products extracted",
-        container.classes,
-        container.id,
-        products.len()
-    );
     Some(Detection {
         container,
         products,

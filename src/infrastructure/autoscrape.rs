@@ -17,7 +17,7 @@ use thirtyfour::prelude::*;
 /// Minimal driver abstraction so `WindowedAutoScraper` can be tested offline
 /// with a fake driver that serves synthetic HTML and records `goto` calls.
 #[async_trait]
-pub trait DriverPage: Send + Sync {
+pub(crate) trait DriverPage: Send + Sync {
     /// The current page URL.
     async fn current_url(&self) -> Result<String>;
     /// The current page HTML source.
@@ -237,7 +237,7 @@ fn page_url(base: &str, param: &str, page: u32) -> String {
 
 /// Sets `param=N` in `base`, preserving other query pairs. Replaces any
 /// existing `param` value instead of appending a duplicate.
-pub fn set_page_url(base: &str, param: &str, page: u32) -> String {
+pub(crate) fn set_page_url(base: &str, param: &str, page: u32) -> String {
     let mut url = url::Url::parse(base).expect("base URL is valid");
     let other: Vec<(String, String)> = url
         .query_pairs()
@@ -254,7 +254,7 @@ pub fn set_page_url(base: &str, param: &str, page: u32) -> String {
 }
 
 /// Whether `url`'s query string contains `param`.
-pub fn url_contains_page_param(url: &str, param: &str) -> bool {
+pub(crate) fn url_contains_page_param(url: &str, param: &str) -> bool {
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
     };
@@ -262,7 +262,7 @@ pub fn url_contains_page_param(url: &str, param: &str) -> bool {
 }
 
 /// The last value of `param` in `url`'s query string, parsed as `u32`.
-pub fn extract_page(url: &str, param: &str) -> Option<u32> {
+pub(crate) fn extract_page(url: &str, param: &str) -> Option<u32> {
     let parsed = url::Url::parse(url).ok()?;
     let mut last = None;
     for (k, v) in parsed.query_pairs() {
@@ -275,7 +275,7 @@ pub fn extract_page(url: &str, param: &str) -> Option<u32> {
 
 /// Whether a window reload should be triggered: count has reached the
 /// threshold and the URL is a paginated `?page=N` listing.
-pub fn should_window_reload(count: usize, threshold: usize, has_page_param: bool) -> bool {
+pub(crate) fn should_window_reload(count: usize, threshold: usize, has_page_param: bool) -> bool {
     has_page_param && threshold != 0 && count >= threshold
 }
 

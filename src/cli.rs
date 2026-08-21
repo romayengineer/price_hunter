@@ -527,16 +527,11 @@ async fn auto_scrape_with_driver(
         autoscrape::SETTLE,
         autoscrape::MAX_STEPS,
         |detection| {
-            let new_products: Vec<Product> = detection
-                .products
-                .iter()
-                .filter(|p| seen.insert(p.name.clone()))
-                .cloned()
-                .collect();
+            let new_products = price_hunter::detect::product_delta(&detection.products, &mut seen);
             if new_products.is_empty() {
                 return;
             }
-            persist_new_products(store, url, detection.products.len(), &new_products);
+            persist_new_products(store, url, &new_products);
         },
     )
     .await?;
@@ -544,14 +539,9 @@ async fn auto_scrape_with_driver(
     // Persist any products seen in the final detection that weren't saved by a
     // growth callback (e.g. strategy exhaustion before a growth).
     if let Some(detection) = &detection {
-        let new_products: Vec<Product> = detection
-            .products
-            .iter()
-            .filter(|p| seen.insert(p.name.clone()))
-            .cloned()
-            .collect();
+        let new_products = price_hunter::detect::product_delta(&detection.products, &mut seen);
         if !new_products.is_empty() {
-            persist_new_products(store, url, detection.products.len(), &new_products);
+            persist_new_products(store, url, &new_products);
         }
     }
     println!(
@@ -566,15 +556,14 @@ fn count_of(detection: &Option<Detection>) -> usize {
     detection.as_ref().map_or(0, |d| d.products.len())
 }
 
-/// Writes a JSON capture for the newly seen products and persists them to
-/// PocketBase (recording the full `total_count` on the scrape row). A failed
-/// write/save is logged, never fatal — the scrape continues.
-fn persist_new_products(
-    store: &Store,
-    url: &str,
-    total_count: usize,
-    new_products: &[Product],
-) {
+/// Writes a JSON capture for only the delta products and persists them to
+/// PocketBase (delta only, `product_count = delta.len()`). A failed
+/// write/save is logged, never fatal — the scrape continues. In-memory only,
+/// so restarts re-emit all products as new.
+fn persist_new_products(store: &Store, url: &str, new_products: &[Product]) {
+    if new_products.is_empty() {
+        return;
+    }
     let detection = Detection {
         container: price_hunter::detect::Container {
             classes: Vec::new(),
@@ -598,7 +587,7 @@ fn persist_new_products(
         url,
         now,
         &path.display().to_string(),
-        total_count,
+        new_products.len(),
         new_products,
     ) {
         Ok(()) => println!(
@@ -628,7 +617,7 @@ async fn run_session(driver: &WebDriver, url: Option<String>, store: Store) -> a
     let mut state = LoopState {
         last_source: None,
         detection: None,
-        last_capture_products: None,
+        seen: std::collections::HashSet::new(),
         store,
     };
     while !poll_closed(driver).await {
@@ -640,7 +629,7 @@ async fn run_session(driver: &WebDriver, url: Option<String>, store: Store) -> a
 struct LoopState {
     last_source: Option<String>,
     detection: Option<Detection>,
-    last_capture_products: Option<Vec<Product>>,
+    seen: std::collections::HashSet<String>,
     store: Store,
 }
 
@@ -688,7 +677,9 @@ async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
     let Some(detection) = &state.detection else {
         return;
     };
-    if state.last_capture_products.as_ref() == Some(&detection.products) {
+    // Delta only: compute new products by full identity (in-memory seen).
+    let delta = price_hunter::detect::product_delta(&detection.products, &mut state.seen);
+    if delta.is_empty() {
         return;
     }
     let url = driver
@@ -696,21 +687,31 @@ async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
         .await
         .map(|u| u.to_string())
         .unwrap_or_default();
-    let path = match capture::write_capture("captures", &url, detection) {
+    let mut container = detection.container.clone();
+    container.child_count = delta.len();
+    let delta_detection = Detection {
+        container,
+        products: delta.clone(),
+    };
+    let path = match capture::write_capture("captures", &url, &delta_detection) {
         Ok(path) => path,
         Err(e) => {
             log::error!("Could not write capture for {url}: {e}");
+            // Roll back seen insertions for this failed batch so retry can emit again.
+            for p in &delta {
+                state.seen.remove(&p.delta_key());
+            }
             return;
         }
     };
     println!(
-        "Captured {} products to {}",
+        "Captured {} new products (of {} total) to {}",
+        delta.len(),
         detection.products.len(),
         path.display()
     );
     let capture_path = path.display().to_string();
-    persist_to_store(&state.store, &url, &capture_path, detection);
-    state.last_capture_products = Some(detection.products.clone());
+    persist_to_store(&state.store, &url, &capture_path, &delta_detection);
 }
 
 fn persist_to_store(store: &Store, url: &str, capture_path: &str, detection: &Detection) {

@@ -47,6 +47,38 @@ pub struct Product {
     pub currency: Option<String>,
 }
 
+impl Product {
+    /// Stable key that considers every field; two products with the same key
+    /// are identical for delta purposes. `price` uses `to_bits` to avoid `f64`
+    /// `Eq`/`Hash` issues and images are sorted so order is irrelevant.
+    pub fn delta_key(&self) -> String {
+        let mut imgs = self.images.clone();
+        imgs.sort_unstable();
+        format!(
+            "{}|{}|{:016x}|{}|{}|{}",
+            self.name,
+            self.price_text,
+            self.price.to_bits(),
+            self.url.as_deref().unwrap_or(""),
+            imgs.join(","),
+            self.currency.as_deref().unwrap_or("")
+        )
+    }
+}
+
+/// Returns only the products not yet seen (inserting their `delta_key` into `seen`).
+/// `seen` is in-memory only and tracks full product identity, not just name.
+pub fn product_delta(
+    products: &[Product],
+    seen: &mut std::collections::HashSet<String>,
+) -> Vec<Product> {
+    products
+        .iter()
+        .filter(|p| seen.insert(p.delta_key()))
+        .cloned()
+        .collect()
+}
+
 /// The grid container that was selected for the detection.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Container {

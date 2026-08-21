@@ -12,7 +12,7 @@ use price_hunter::domain::model::{
     ProviderRow,
 };
 use price_hunter::domain::ports::{
-    BrandCatalog, MatchStore, PriceHistory, PriceStore, ProductCatalog, ProviderCatalog,
+    BrandCatalog, MatchStore, PriceHistory, ProductCatalog, ProviderCatalog,
 };
 
 /// In-memory [`PriceStore`] for exercising the application use cases offline.

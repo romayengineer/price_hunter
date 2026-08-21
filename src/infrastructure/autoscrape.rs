@@ -6,6 +6,7 @@
 //! per site; the shared [`scrape_until_no_growth`] loop drives any strategy to
 //! completion and returns the largest product grid seen.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -262,6 +263,7 @@ pub struct WindowedAutoScraper {
     inner: Box<dyn AutoScraper>,
     param: String,
     threshold: usize,
+    reloaded: HashSet<u32>,
 }
 
 impl WindowedAutoScraper {
@@ -271,6 +273,7 @@ impl WindowedAutoScraper {
             inner,
             param,
             threshold,
+            reloaded: HashSet::new(),
         }
     }
 }
@@ -289,14 +292,22 @@ impl AutoScraper for WindowedAutoScraper {
                 let count = peek_count(driver).await?;
                 if should_window_reload(count, self.threshold, has_page) {
                     let page = extract_page(&current_url, &self.param).unwrap_or(1);
-                    let url = set_page_url(&current_url, &self.param, page);
-                    log::info!(
-                        "memory optimization: reloading {url} (window threshold {} reached with {count} products)",
-                        self.threshold
-                    );
-                    WINDOW_RELOADED.store(true, Ordering::SeqCst);
-                    driver.goto(&url).await?;
-                    return Ok(true);
+                    if self.reloaded.contains(&page) {
+                        log::debug!(
+                            "window: page {page} already reloaded, skipping same-url reload (total {count} >= {})",
+                            self.threshold
+                        );
+                    } else {
+                        self.reloaded.insert(page);
+                        let url = set_page_url(&current_url, &self.param, page);
+                        log::info!(
+                            "memory optimization: reloading {url} (window threshold {} reached with {count} products)",
+                            self.threshold
+                        );
+                        WINDOW_RELOADED.store(true, Ordering::SeqCst);
+                        driver.goto(&url).await?;
+                        return Ok(true);
+                    }
                 }
                 log::debug!(
                     "window: {count} products < threshold {}, continuing ({current_url})",

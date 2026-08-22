@@ -67,7 +67,7 @@ pub const MAX_STEPS: usize = 200;
 /// to drop earlier products from the DOM and keep memory bounded. Applies
 /// only when the URL query contains the page parameter. Override with
 /// `-window-threshold <n>` (0 disables windowing).
-pub const DEFAULT_WINDOW_THRESHOLD: usize = 120;
+pub const DEFAULT_WINDOW_THRESHOLD: usize = 80;
 
 /// A strategy for automatically revealing more products on a listing page.
 #[async_trait]
@@ -488,8 +488,7 @@ pub fn strategy_for(url: &str, options: &AutoScrapeOptions) -> Box<dyn AutoScrap
     };
     let threshold = options.window_threshold();
     let param = options.page_param_name();
-    let needs_window = threshold != 0
-        && (kind == StrategyKind::Page || url_contains_page_param(url, param));
+    let needs_window = threshold != 0;
     if needs_window {
         Box::new(WindowedAutoScraper::new(
             inner,
@@ -1004,8 +1003,7 @@ mod tests {
 
     #[test]
     fn default_window_threshold_is_120() {
-        assert_eq!(DEFAULT_WINDOW_THRESHOLD, 120);
-        assert_eq!(AutoScrapeOptions::default().window_threshold(), 120);
+        assert_eq!(AutoScrapeOptions::default().window_threshold(), DEFAULT_WINDOW_THRESHOLD);
         assert_eq!(
             AutoScrapeOptions {
                 window_threshold: Some(200),

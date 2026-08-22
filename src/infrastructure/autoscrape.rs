@@ -465,7 +465,8 @@ pub fn default_strategy(host: &str) -> StrategyKind {
         "www.parfumerie.com.ar"
         | "parfumerie.com.ar"
         | "perfumeriasrouge.com" => StrategyKind::InfiniteScroll,
-        "www.perfumeriasrouge.com" => StrategyKind::ScrollClick,
+        "www.juleriaque.com.ar"
+        | "www.perfumeriasrouge.com" => StrategyKind::ScrollClick,
         _ => StrategyKind::ScrollClick,
     }
 }

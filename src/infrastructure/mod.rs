@@ -6,7 +6,6 @@ pub mod autoscrape;
 pub mod browser;
 pub mod capture;
 pub mod config;
-pub mod export;
 pub mod instance;
 pub mod matrix_server;
 pub mod store;

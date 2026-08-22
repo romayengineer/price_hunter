@@ -8,17 +8,20 @@
 
 #![deny(missing_docs)]
 
-pub mod application;
-pub mod domain;
 pub mod infrastructure;
 
-pub use crate::domain::detect;
-pub use crate::domain::matching;
+// Re-export core so `crate::domain`/`crate::application` keep working in
+// infrastructure and `price_hunter::detect` stays stable for tests.
+pub use price_hunter_core::application;
+pub use price_hunter_core::domain;
+
+pub use price_hunter_core::domain::detect;
+pub use price_hunter_core::domain::matching;
+pub use price_hunter_core::application::export;
 pub use crate::infrastructure::autoscrape;
 pub use crate::infrastructure::browser;
 pub use crate::infrastructure::capture;
 pub use crate::infrastructure::config;
-pub use crate::infrastructure::export;
 pub use crate::infrastructure::instance;
 pub use crate::infrastructure::matrix_server;
 pub use crate::infrastructure::store;

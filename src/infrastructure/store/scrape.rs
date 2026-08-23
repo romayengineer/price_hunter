@@ -179,12 +179,18 @@ impl Store {
         let existing = self.list_provider_products(&provider.id)?;
         let by_name: HashMap<&str, &ProviderProductRow> =
             existing.iter().map(|r| (r.name.as_str(), r)).collect();
+        let by_url: HashMap<&str, &ProviderProductRow> = existing
+            .iter()
+            .filter(|r| !r.provider_product_url.is_empty())
+            .map(|r| (r.provider_product_url.as_str(), r))
+            .collect();
         let mut new_ids: HashMap<String, String> = HashMap::new();
 
         for product in products {
             // A single bad product must not drop the rest of the capture: log
             // and move on so the other products still land.
-            if let Err(e) = self.save_product(provider, scrape_id, product, &by_name, &mut new_ids)
+            if let Err(e) =
+                self.save_product(provider, scrape_id, product, &by_name, &by_url, &mut new_ids)
             {
                 log::error!("could not persist product {:?}: {e:#}", product.name);
             }
@@ -196,27 +202,42 @@ impl Store {
     /// when neither `name` nor `provider_product_url` matches an existing one.
     /// Newly created ids are recorded in `new_ids` (keyed by name) so a
     /// duplicate name within one detection reuses the same row.
+    #[allow(clippy::cognitive_complexity)]
     fn save_product(
         &self,
         provider: &ProviderRow,
         scrape_id: &str,
         product: &Product,
         by_name: &HashMap<&str, &ProviderProductRow>,
+        by_url: &HashMap<&str, &ProviderProductRow>,
         new_ids: &mut HashMap<String, String>,
     ) -> Result<()> {
         let url = product.url.as_deref().unwrap_or("");
         let brand_name = product.brand.as_deref().unwrap_or("").to_string();
-        let existing = by_name.get(product.name.as_str());
+        // Prefer lookup by enriched name, then fall back to URL (handles
+        // renaming from short slug "THE-DREAMER-EDT" to enriched
+        // "VERSACE THE DREAMER EAU DE TOILETTE 100 ML" for juleriaque).
+        let existing_by_name = by_name.get(product.name.as_str());
+        let existing_by_url = if !url.is_empty() {
+            by_url.get(url)
+        } else {
+            None
+        };
+        let existing = existing_by_name.or(existing_by_url);
         let existing_id = existing.map(|r| r.id.clone());
         let is_new = existing_id.is_none() && !new_ids.contains_key(&product.name);
         let provider_product_id = match existing_id {
             Some(id) => {
-                // Update brand_name if it changed on an existing row (stores unknown brands
-                // learned from the trusted path even when brand_id stays null).
+                // Patch name and brand_name if they changed (e.g. juleriaque
+                // short name -> enriched full name + brand).
                 if let Some(row) = existing {
                     let existing_brand = row.brand_name.as_deref().unwrap_or("");
+                    let existing_name = row.name.as_str();
                     if existing_brand != brand_name {
                         let _ = self.patch_brand_name(&id, &brand_name);
+                    }
+                    if existing_name != product.name.as_str() {
+                        let _ = self.patch_product_name(&id, &product.name);
                     }
                 }
                 id
@@ -264,6 +285,15 @@ impl Store {
 
     fn patch_brand_name(&self, id: &str, brand_name: &str) -> Result<()> {
         let body = serde_json::to_string(&serde_json::json!({ "brand_name": brand_name }))?;
+        self.agent_patch_json::<serde_json::Value>(
+            &self.record_url(PROVIDER_PRODUCTS_COLLECTION, id),
+            &body,
+        )?;
+        Ok(())
+    }
+
+    fn patch_product_name(&self, id: &str, name: &str) -> Result<()> {
+        let body = serde_json::to_string(&serde_json::json!({ "name": name }))?;
         self.agent_patch_json::<serde_json::Value>(
             &self.record_url(PROVIDER_PRODUCTS_COLLECTION, id),
             &body,

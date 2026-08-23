@@ -45,6 +45,8 @@ impl DriverPage for WebDriver {
 }
 
 use crate::domain::detect::{self, Detection};
+use crate::domain::ports::{BrandCatalog, ProductCatalog};
+use crate::store::Store;
 
 static WINDOW_RELOADED: AtomicBool = AtomicBool::new(false);
 
@@ -547,6 +549,26 @@ impl NoGrowthTracker {
     }
 }
 
+#[allow(clippy::cognitive_complexity)]
+fn detect_best_with_store(source: &str, store: Option<&Store>) -> Option<Detection> {
+    if let Some(s) = store
+        && let Ok(brands) = s.list_brands()
+        && !brands.is_empty()
+        && let Some(d) =
+            detect::detect_grid_with_brands(source, &brands.into_iter().map(|b| b.name).collect::<Vec<_>>())
+    {
+        return Some(d);
+    }
+    if let Some(s) = store
+        && let Ok(products) = s.list_products()
+        && !products.is_empty()
+        && let Some(d) = detect::detect_grid_with_products(source, &products)
+    {
+        return Some(d);
+    }
+    detect::detect_grid(source)
+}
+
 /// Drives `strategy` over the page `driver` currently shows, repeating the
 /// load-more action until the detected product count stops increasing, the
 /// strategy reports exhaustion, or the step budget is spent. `on_growth` is
@@ -566,11 +588,28 @@ pub async fn scrape_until_no_growth(
     max_steps: usize,
     on_growth: impl FnMut(&Detection),
 ) -> Result<Option<Detection>> {
+    scrape_until_no_growth_with_store(driver, strategy, load_timeout, max_steps, None, on_growth)
+        .await
+}
+
+/// Catalog-aware variant: reloads the brand/product catalog on every poll
+/// (every `detect` call) so juleriaque and other stores with learned trusted
+/// paths and `brand_from_name` benefit even when the brand table grows during
+/// the scrape. Pass `Some(store)` from `cli::auto_scrape`; tests pass `None`.
+pub async fn scrape_until_no_growth_with_store(
+    driver: &WebDriver,
+    strategy: &mut dyn AutoScraper,
+    load_timeout: Duration,
+    max_steps: usize,
+    store: Option<&Store>,
+    on_growth: impl FnMut(&Detection),
+) -> Result<Option<Detection>> {
     let mut state = ScrapeState {
         best: None,
         tracker: NoGrowthTracker::new(NO_GROWTH_LIMIT),
         last_count: 0,
         on_growth: Box::new(on_growth),
+        store,
     };
 
     state.last_count = detect_products(driver, &mut state).await?;
@@ -607,6 +646,7 @@ struct ScrapeState<'a> {
     tracker: NoGrowthTracker,
     last_count: usize,
     on_growth: Box<dyn FnMut(&Detection) + 'a>,
+    store: Option<&'a Store>,
 }
 
 /// One iteration of the auto-scrape loop: advances the strategy (one load-more
@@ -652,7 +692,7 @@ async fn detect_products(driver: &WebDriver, state: &mut ScrapeState<'_>) -> Res
         .map(|u| u.to_string())
         .unwrap_or_default();
     let source = driver.source().await?;
-    let Some(detection) = detect::detect_grid(&source) else {
+    let Some(detection) = detect_best_with_store(&source, state.store) else {
         log::info!("no product grid on {url}");
         if WINDOW_RELOADED.swap(false, Ordering::SeqCst) {
             log::info!("window reload: resetting best after navigation to {url}");

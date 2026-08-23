@@ -475,11 +475,12 @@ async fn auto_scrape_with_driver(
     );
 
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let detection = autoscrape::scrape_until_no_growth(
+    let detection = autoscrape::scrape_until_no_growth_with_store(
         driver,
         strategy.as_mut(),
         autoscrape::SETTLE,
         autoscrape::MAX_STEPS,
+        Some(store),
         |detection| {
             let new_products = price_hunter::detect::product_delta(&detection.products, &mut seen);
             if new_products.is_empty() {

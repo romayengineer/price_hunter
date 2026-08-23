@@ -628,6 +628,26 @@ async fn refresh(driver: &WebDriver, state: &mut LoopState) {
     capture_if_needed(driver, state).await;
 }
 
+#[allow(clippy::cognitive_complexity)]
+fn detect_grid_best(source: &str, store: &Store) -> Option<Detection> {
+    if let Ok(brands) = store.list_brands()
+        && !brands.is_empty()
+        && let Some(d) = detect::detect_grid_with_brands(
+            source,
+            &brands.into_iter().map(|b| b.name).collect::<Vec<_>>(),
+        )
+    {
+        return Some(d);
+    }
+    if let Ok(products) = store.list_products()
+        && !products.is_empty()
+        && let Some(d) = detect::detect_grid_with_products(source, &products)
+    {
+        return Some(d);
+    }
+    detect::detect_grid(source)
+}
+
 fn update_state(state: &mut LoopState, source: Option<String>) {
     let Some(source) = source else {
         return;
@@ -636,7 +656,7 @@ fn update_state(state: &mut LoopState, source: Option<String>) {
         return;
     }
     state.last_source = Some(source.clone());
-    if let Some(detection) = detect::detect_grid(&source) {
+    if let Some(detection) = detect_grid_best(&source, &state.store) {
         state.detection = Some(detection);
     }
 }

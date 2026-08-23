@@ -205,15 +205,27 @@ impl Store {
         new_ids: &mut HashMap<String, String>,
     ) -> Result<()> {
         let url = product.url.as_deref().unwrap_or("");
-        let existing_id = by_name.get(product.name.as_str()).map(|r| r.id.clone());
+        let brand_name = product.brand.as_deref().unwrap_or("").to_string();
+        let existing = by_name.get(product.name.as_str());
+        let existing_id = existing.map(|r| r.id.clone());
         let is_new = existing_id.is_none() && !new_ids.contains_key(&product.name);
         let provider_product_id = match existing_id {
-            Some(id) => id,
+            Some(id) => {
+                // Update brand_name if it changed on an existing row (stores unknown brands
+                // learned from the trusted path even when brand_id stays null).
+                if let Some(row) = existing {
+                    let existing_brand = row.brand_name.as_deref().unwrap_or("");
+                    if existing_brand != brand_name {
+                        let _ = self.patch_brand_name(&id, &brand_name);
+                    }
+                }
+                id
+            }
             None => {
                 if let Some(id) = new_ids.get(&product.name) {
                     id.clone()
                 } else {
-                    let id = self.create_provider_product(provider, url, &product.name)?;
+                    let id = self.create_provider_product(provider, url, &product.name, &brand_name)?;
                     new_ids.insert(product.name.clone(), id.clone());
                     id
                 }
@@ -235,6 +247,7 @@ impl Store {
         provider: &ProviderRow,
         provider_product_url: &str,
         name: &str,
+        brand_name: &str,
     ) -> Result<String> {
         let row = self.agent_post_json::<ProviderProductRow>(
             &self.collection_url(PROVIDER_PRODUCTS_COLLECTION),
@@ -242,10 +255,20 @@ impl Store {
                 provider_id: provider.id.clone(),
                 provider_product_url: provider_product_url.to_string(),
                 name: name.to_string(),
+                brand_name: brand_name.to_string(),
                 last_seen_at: iso8601(now_secs()),
             })?,
         )?;
         Ok(row.id)
+    }
+
+    fn patch_brand_name(&self, id: &str, brand_name: &str) -> Result<()> {
+        let body = serde_json::to_string(&serde_json::json!({ "brand_name": brand_name }))?;
+        self.agent_patch_json::<serde_json::Value>(
+            &self.record_url(PROVIDER_PRODUCTS_COLLECTION, id),
+            &body,
+        )?;
+        Ok(())
     }
 
     /// Inserts a price row only when it differs from the last recorded price

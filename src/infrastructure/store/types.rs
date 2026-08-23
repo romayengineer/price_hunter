@@ -72,6 +72,7 @@ pub(super) struct ProviderProductPayload {
     pub(super) provider_id: String,
     pub(super) provider_product_url: String,
     pub(super) name: String,
+    pub(super) brand_name: String,
     pub(super) last_seen_at: String,
 }
 
@@ -185,12 +186,14 @@ mod tests {
             provider_id: "prov-1".to_string(),
             provider_product_url: "/a/light-blue-homme-edp-50".to_string(),
             name: String::new(),
+            brand_name: "dove".to_string(),
             last_seen_at: iso8601(123456),
         };
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(json["provider_id"], "prov-1");
         assert_eq!(json["provider_product_url"], "/a/light-blue-homme-edp-50");
         assert_eq!(json["name"], "");
+        assert_eq!(json["brand_name"], "dove");
         assert_eq!(json["last_seen_at"], "1970-01-02 10:17:36.000Z");
     }
 

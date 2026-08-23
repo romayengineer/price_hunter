@@ -18,6 +18,7 @@ fn sample_detection() -> Detection {
                 url: Some("/a/light-blue-homme-edp-50".to_string()),
                 images: vec!["https://cdn.example/img/1.jpg".to_string()],
                 currency: Some("ARS".to_string()),
+                brand: None,
             },
             Product {
                 name: "212 Vip EDP 80".to_string(),
@@ -26,6 +27,7 @@ fn sample_detection() -> Detection {
                 url: Some("/b/212-vip-edp-80".to_string()),
                 images: Vec::new(),
                 currency: None,
+                brand: None,
             },
             Product {
                 name: "A Drop d'Issey EDP Fraîche".to_string(),
@@ -34,6 +36,7 @@ fn sample_detection() -> Detection {
                 url: Some("/c/drop-d-issey-edp-fraiche".to_string()),
                 images: Vec::new(),
                 currency: Some("ARS".to_string()),
+                brand: None,
             },
         ],
     }

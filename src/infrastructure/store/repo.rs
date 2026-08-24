@@ -239,6 +239,36 @@ impl ProductCatalog for Store {
             .map_err(|e| anyhow::anyhow!("could not create product: {e}"))?;
         Ok(ProductInsert::Created)
     }
+
+    /// Deletes one canonical product after unlinking any `provider_products`
+    /// that reference it (kept unlinked) and cascade-deleting its
+    /// `provider_product_matches` rows.
+    fn delete_product(&self, product_id: &str) -> Result<(), PriceStoreError> {
+        // 1. Null out provider_products.product_id (keep rows for re-match)
+        let filter = format!("product_id='{}'", escape_filter(product_id));
+        let linked: Vec<ProviderProductRow> = self
+            .list_all(PROVIDER_PRODUCTS_COLLECTION, Some(&filter), None, 100)
+            .map_err(|e| PriceStoreError::Request(format!("{e:#}")))?;
+        for pp in linked {
+            self.client
+                .records(PROVIDER_PRODUCTS_COLLECTION)
+                .update(&pp.id, ProductLinkPayload { product_id: None })
+                .call()
+                .map_err(|e| anyhow::anyhow!("could not unlink {pp_id}: {e}", pp_id = pp.id))?;
+        }
+        // 2. Cascade-delete matches for this canonical product
+        let matches: Vec<ProviderMatchRow> = self
+            .list_all(PROVIDER_PRODUCT_MATCHES_COLLECTION, Some(&filter), None, 100)
+            .map_err(|e| PriceStoreError::Request(format!("{e:#}")))?;
+        for m in matches {
+            self.agent_destroy(PROVIDER_PRODUCT_MATCHES_COLLECTION, &m.id)
+                .map_err(|e| PriceStoreError::Request(format!("{e:#}")))?;
+        }
+        // 3. Delete the product itself
+        self.agent_destroy(PRODUCTS_COLLECTION, product_id)
+            .map_err(|e| PriceStoreError::Request(format!("{e:#}")))?;
+        Ok(())
+    }
 }
 
 impl BrandCatalog for Store {

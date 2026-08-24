@@ -35,6 +35,10 @@ pub enum Command {
     ExportProducts(PathBuf),
     /// `-export-brands <csv>`
     ExportBrands(PathBuf),
+    /// `-delete-products [<csv>]` — delete all canonical products or, with a
+    /// CSV path, only those whose `(brand, product_name, size)` is absent from
+    /// the CSV (auto-unlinks provider_products, cascade-deletes matches).
+    DeleteProducts(Option<PathBuf>),
     /// `-match-products`
     MatchProducts,
     /// `-link-matches`
@@ -74,6 +78,9 @@ pub fn parse(args: &[String]) -> Command {
     }
     if let Some(path) = arg_after(rest, "-export-brands") {
         return Command::ExportBrands(path);
+    }
+    if rest.iter().any(|a| a == "-delete-products") {
+        return Command::DeleteProducts(arg_after_optional(rest, "-delete-products"));
     }
     if rest.iter().any(|a| a == "-match-products") {
         return Command::MatchProducts;
@@ -154,6 +161,17 @@ fn arg_after_string(rest: &[String], flag: &str) -> Option<String> {
     rest.get(i + 1).cloned()
 }
 
+/// The value following `flag` in `rest` as a path, if present and not another flag.
+fn arg_after_optional(rest: &[String], flag: &str) -> Option<PathBuf> {
+    let i = rest.iter().position(|a| a == flag)?;
+    let next = rest.get(i + 1)?;
+    if next.starts_with('-') {
+        None
+    } else {
+        Some(PathBuf::from(next))
+    }
+}
+
 /// Dispatches `command` and reports its result on stdout. `yes` auto-accepts
 /// any confirmation prompt the command would otherwise ask interactively.
 pub async fn run(command: Command, yes: bool) -> anyhow::Result<()> {
@@ -163,6 +181,7 @@ pub async fn run(command: Command, yes: bool) -> anyhow::Result<()> {
         Command::ExportMatrix(path) => export_matrix(&path),
         Command::ExportProducts(path) => export_products(&path),
         Command::ExportBrands(path) => export_brands(&path),
+        Command::DeleteProducts(path) => delete_products(path, yes),
         Command::MatchProducts => match_products(),
         Command::LinkMatches => link_matches(),
         Command::MatchBrands => match_brands(),
@@ -235,6 +254,111 @@ fn export_brands(path: &PathBuf) -> anyhow::Result<()> {
     std::fs::write(path, csv).with_context(|| format!("could not write CSV to {path:?}"))?;
     println!("Exported {} brands to {}", brands.len(), path.display());
     Ok(())
+}
+
+/// Deletes canonical products. With a CSV path, only products whose
+/// `(brand, product_name, size)` is absent from the CSV are removed;
+/// without a path, every product is removed. Each stale product is
+/// auto-unlinked from provider_products (kept unlinked) and its
+/// provider_product_matches are cascade-deleted before the product row
+/// itself is deleted. Prompts per 50-row page unless `yes` is set.
+fn delete_products(path: Option<PathBuf>, yes: bool) -> anyhow::Result<()> {
+    let store = connect()?;
+    let stale = stale_products(&store, path.as_ref())?;
+    if stale.is_empty() {
+        println!("Nothing to delete");
+        return Ok(());
+    }
+    delete_product_pages(&store, &stale, yes)
+}
+
+fn stale_products(
+    store: &Store,
+    path: Option<&PathBuf>,
+) -> anyhow::Result<Vec<price_hunter::domain::model::ProductRow>> {
+    let all = store.list_all_products()?;
+    if let Some(csv_path) = path {
+        let keys = csv_product_keys(csv_path)?;
+        Ok(all
+            .into_iter()
+            .filter(|p| !keys.contains(&(p.brand.clone(), p.product_name.clone(), p.size.clone())))
+            .collect())
+    } else {
+        Ok(all)
+    }
+}
+
+fn delete_product_pages(
+    store: &Store,
+    stale: &[price_hunter::domain::model::ProductRow],
+    yes: bool,
+) -> anyhow::Result<()> {
+    println!("{} canonical products to delete", stale.len());
+    let pages = stale.len().div_ceil(50);
+    let mut deleted = 0usize;
+    for (page_index, page) in stale.chunks(50).enumerate() {
+        if !confirm_delete_page(page, page_index, pages, yes, deleted, stale.len())? {
+            return Ok(());
+        }
+        for row in page {
+            store
+                .delete_product(&row.id)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+        deleted += page.len();
+        println!("Deleted {} rows (total {deleted})", page.len());
+    }
+    println!("Done: deleted {deleted} canonical products");
+    Ok(())
+}
+
+fn confirm_delete_page(
+    page: &[price_hunter::domain::model::ProductRow],
+    page_index: usize,
+    pages: usize,
+    yes: bool,
+    deleted: usize,
+    total: usize,
+) -> anyhow::Result<bool> {
+    println!();
+    if yes {
+        println!(
+            "Deleting page {}/{} ({} rows)",
+            page_index + 1,
+            pages,
+            page.len()
+        );
+        return Ok(true);
+    }
+    println!("Next page ({} rows):", page.len());
+    for (i, row) in page.iter().enumerate() {
+        println!("{}. {}\t{} [{} | {}]", i + 1, row.id, row.name, row.brand, row.size);
+    }
+    if !confirm(&format!("Delete these {} rows? [y/N]", page.len()), false)? {
+        println!("Aborted ({} of {} deleted)", deleted, total);
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Reads `(brand, product_name, size)` keys from a `brand,product_name,size`
+/// CSV (header-aware via `csv::Reader`, trims whitespace, skips empty
+/// product_name rows).
+fn csv_product_keys(path: &std::path::Path) -> anyhow::Result<std::collections::HashSet<(String, String, String)>> {
+    let mut reader = csv::Reader::from_path(path)
+        .with_context(|| format!("could not read CSV at {}", path.display()))?;
+    let mut keys = std::collections::HashSet::new();
+    for result in reader.records() {
+        let record = result.with_context(|| format!("could not parse CSV at {}", path.display()))?;
+        let brand = record.get(0).unwrap_or_default().trim().to_string();
+        let product_name = record.get(1).unwrap_or_default().trim().to_string();
+        let size = record.get(2).unwrap_or_default().trim().to_string();
+        if product_name.is_empty() {
+            continue;
+        }
+        keys.insert((brand, product_name, size));
+    }
+    Ok(keys)
 }
 
 /// Runs the fuzzy matcher against the `products` and `provider_products`
@@ -832,6 +956,27 @@ mod tests {
     }
 
     #[test]
+    fn delete_products_flag_parses_optional_path() {
+        assert_eq!(
+            parse(&args(&["-delete-products"])),
+            Command::DeleteProducts(None)
+        );
+        assert_eq!(
+            parse(&args(&["-delete-products", "products.csv"])),
+            Command::DeleteProducts(Some(PathBuf::from("products.csv")))
+        );
+        // flag-like next arg is not consumed
+        assert_eq!(
+            parse(&args(&["-delete-products", "-yes"])),
+            Command::DeleteProducts(None)
+        );
+        assert_eq!(
+            parse(&args(&["-delete-products", "products.csv", "-yes"])),
+            Command::DeleteProducts(Some(PathBuf::from("products.csv")))
+        );
+    }
+
+    #[test]
     fn auto_scrape_flag_collects_url_and_modifiers() {
         assert_eq!(
             parse(&args(&["-auto-scrape", "https://example.com/list"])),
@@ -1002,6 +1147,11 @@ mod tests {
                 "-import-products",
                 "p.csv"
             ])),
+            Command::ImportProducts(PathBuf::from("p.csv"))
+        );
+        // -delete-products is lower priority than imports
+        assert_eq!(
+            parse(&args(&["-delete-products", "stale.csv", "-import-products", "p.csv"])),
             Command::ImportProducts(PathBuf::from("p.csv"))
         );
     }

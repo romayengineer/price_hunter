@@ -7,20 +7,21 @@ use serde::de::DeserializeOwned;
 use super::Store;
 use super::http::escape_filter;
 use super::types::{
-    BRANDS_COLLECTION, BrandLinkPayload, MatchListResponse, PRODUCTS_COLLECTION,
-    PROVIDER_PRODUCT_IMAGES_COLLECTION, PROVIDER_PRODUCT_MATCHES_COLLECTION,
-    PROVIDER_PRODUCT_PRICES_COLLECTION, PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION,
-    ProductImportPayload, ProductImportRow, ProductLinkPayload, ProviderMatchPayload,
-    ProviderPriceRow,
+    BRANDS_COLLECTION, BrandLinkPayload, MatchListResponse, PRODUCT_BASES_COLLECTION,
+    PRODUCTS_COLLECTION, PROVIDER_PRODUCT_IMAGES_COLLECTION,
+    PROVIDER_PRODUCT_MATCHES_COLLECTION, PROVIDER_PRODUCT_PRICES_COLLECTION,
+    PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION, ProductBaseImportRow,
+    ProductBasePayload, ProductImportPayload, ProductImportRow, ProductLinkPayload,
+    ProviderMatchPayload, ProviderPriceRow,
 };
 use crate::domain::error::PriceStoreError;
 use crate::domain::matching::{MIN_SCORE, MatchCandidate};
 use crate::domain::model::{
-    BrandRow, MatchInsert, ProductInsert, ProductRow, ProviderMatchRow, ProviderProductRow,
-    ProviderRow,
+    BrandRow, MatchInsert, ProductBaseInsert, ProductBaseRow, ProductInsert, ProductRow,
+    ProviderMatchRow, ProviderProductRow, ProviderRow,
 };
 use crate::domain::ports::{
-    BrandCatalog, MatchStore, PriceHistory, ProductCatalog, ProviderCatalog,
+    BrandCatalog, MatchStore, PriceHistory, ProductBaseCatalog, ProductCatalog, ProviderCatalog,
 };
 
 impl Store {
@@ -190,6 +191,59 @@ impl Store {
     }
 }
 
+impl ProductBaseCatalog for Store {
+    fn list_product_bases(&self) -> Result<Vec<ProductBaseRow>, PriceStoreError> {
+        Ok(self.list_all(PRODUCT_BASES_COLLECTION, None, None, 500)?)
+    }
+
+    fn create_product_base(
+        &self,
+        brand: &str,
+        product_name: &str,
+    ) -> Result<ProductBaseInsert, PriceStoreError> {
+        let filter = format!(
+            "brand='{}' && product_name='{}'",
+            escape_filter(brand),
+            escape_filter(product_name)
+        );
+        let existing = self
+            .client
+            .records(PRODUCT_BASES_COLLECTION)
+            .list()
+            .filter(&filter)
+            .per_page(1)
+            .call::<ProductBaseImportRow>()
+            .context("could not look up product base")?;
+        if existing.items.into_iter().next().is_some() {
+            return Ok(ProductBaseInsert::AlreadyExists);
+        }
+        self.client
+            .records(PRODUCT_BASES_COLLECTION)
+            .create(ProductBasePayload {
+                brand: brand.to_string(),
+                product_name: product_name.to_string(),
+                category: String::new(),
+                active: true,
+            })
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not create product base: {e}"))?;
+        Ok(ProductBaseInsert::Created)
+    }
+
+    fn delete_product_base(&self, product_base_id: &str) -> Result<(), PriceStoreError> {
+        let filter = format!("product_base_id='{}'", escape_filter(product_base_id));
+        let variants: Vec<ProductRow> = self
+            .list_all(PRODUCTS_COLLECTION, Some(&filter), None, 100)
+            .map_err(|e| PriceStoreError::Request(format!("{e:#}")))?;
+        for v in variants {
+            self.delete_product(&v.id)?;
+        }
+        self.agent_destroy(PRODUCT_BASES_COLLECTION, product_base_id)
+            .map_err(|e| PriceStoreError::Request(format!("{e:#}")))?;
+        Ok(())
+    }
+}
+
 impl ProductCatalog for Store {
     fn list_products(&self) -> Result<Vec<ProductRow>, PriceStoreError> {
         Ok(self.list_all(PRODUCTS_COLLECTION, Some("active=true"), None, 100)?)
@@ -234,9 +288,65 @@ impl ProductCatalog for Store {
                 size: size.to_string(),
                 category: String::new(),
                 active: true,
+                product_base_id: None,
             })
             .call()
             .map_err(|e| anyhow::anyhow!("could not create product: {e}"))?;
+        Ok(ProductInsert::Created)
+    }
+
+    fn create_variant(
+        &self,
+        product_base_id: &str,
+        size: &str,
+        name: &str,
+    ) -> Result<ProductInsert, PriceStoreError> {
+        if size.trim().is_empty() {
+            return Err(PriceStoreError::Request(
+                "size is required for variant".to_string(),
+            ));
+        }
+        let base_filter = format!("id='{}'", escape_filter(product_base_id));
+        let base = self
+            .client
+            .records(PRODUCT_BASES_COLLECTION)
+            .list()
+            .filter(&base_filter)
+            .per_page(1)
+            .call::<ProductBaseRow>()
+            .context("could not look up product base")?;
+        let base_row = base.items.into_iter().next().ok_or_else(|| {
+            PriceStoreError::Request(format!("product base {product_base_id} not found"))
+        })?;
+        let filter = format!(
+            "product_base_id='{}' && size='{}'",
+            escape_filter(product_base_id),
+            escape_filter(size)
+        );
+        let existing = self
+            .client
+            .records(PRODUCTS_COLLECTION)
+            .list()
+            .filter(&filter)
+            .per_page(1)
+            .call::<ProductImportRow>()
+            .context("could not look up variant")?;
+        if existing.items.into_iter().next().is_some() {
+            return Ok(ProductInsert::AlreadyExists);
+        }
+        self.client
+            .records(PRODUCTS_COLLECTION)
+            .create(ProductImportPayload {
+                brand: base_row.brand,
+                product_name: base_row.product_name,
+                name: name.to_string(),
+                size: size.to_string(),
+                category: String::new(),
+                active: true,
+                product_base_id: Some(product_base_id.to_string()),
+            })
+            .call()
+            .map_err(|e| anyhow::anyhow!("could not create variant: {e}"))?;
         Ok(ProductInsert::Created)
     }
 

@@ -27,6 +27,8 @@ use price_hunter::terminal::{confirm, confirm_key};
 pub enum Command {
     /// `-import-products <csv>`
     ImportProducts(PathBuf),
+    /// `-import-product-bases <csv>`
+    ImportProductBases(PathBuf),
     /// `-import-brands <csv>`
     ImportBrands(PathBuf),
     /// `-export-matrix <csv>`
@@ -64,6 +66,9 @@ pub enum Command {
 #[allow(clippy::cognitive_complexity)]
 pub fn parse(args: &[String]) -> Command {
     let rest = &args[1..];
+    if let Some(path) = arg_after(rest, "-import-product-bases") {
+        return Command::ImportProductBases(path);
+    }
     if let Some(path) = arg_after(rest, "-import-products") {
         return Command::ImportProducts(path);
     }
@@ -177,6 +182,7 @@ fn arg_after_optional(rest: &[String], flag: &str) -> Option<PathBuf> {
 pub async fn run(command: Command, yes: bool) -> anyhow::Result<()> {
     match command {
         Command::ImportProducts(path) => import_products(&path),
+        Command::ImportProductBases(path) => import_product_bases(&path),
         Command::ImportBrands(path) => import_brands(&path),
         Command::ExportMatrix(path) => export_matrix(&path),
         Command::ExportProducts(path) => export_products(&path),
@@ -206,6 +212,15 @@ fn import_products(path: &std::path::Path) -> anyhow::Result<()> {
     let store = connect()?;
     let created = store.import_products_csv(path)?;
     println!("Done: {created} products imported");
+    Ok(())
+}
+
+/// Imports `brand,product_name` rows from a CSV into the `product_bases`
+/// table and exits without opening a browser.
+fn import_product_bases(path: &std::path::Path) -> anyhow::Result<()> {
+    let store = connect()?;
+    let created = store.import_product_bases_csv(path)?;
+    println!("Done: {created} product bases imported");
     Ok(())
 }
 
@@ -521,12 +536,17 @@ fn import_unmatched(yes: bool) -> anyhow::Result<()> {
             println!("      skipped");
             continue;
         }
-        match store.create_product(
-            &proposal.brand,
-            &proposal.product_name,
-            &proposal.name,
-            &proposal.size,
-        )? {
+        let insert_result = if let Some(base_id) = &proposal.product_base_id {
+            store.create_variant(base_id, &proposal.size, &proposal.name)
+        } else {
+            store.create_product(
+                &proposal.brand,
+                &proposal.product_name,
+                &proposal.name,
+                &proposal.size,
+            )
+        };
+        match insert_result? {
             ProductInsert::Created => {
                 inserted += 1;
                 println!("      inserted: {}", proposal.name);

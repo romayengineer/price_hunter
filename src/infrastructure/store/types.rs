@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::model::ProviderMatchRow;
 
 pub(super) const PRODUCTS_COLLECTION: &str = "products";
+pub(super) const PRODUCT_BASES_COLLECTION: &str = "product_bases";
 pub(super) const BRANDS_COLLECTION: &str = "brand";
 pub(super) const PROVIDERS_COLLECTION: &str = "providers";
 pub(super) const SCRAPES_COLLECTION: &str = "scrapes";
@@ -20,11 +21,28 @@ pub(super) struct ProductImportPayload {
     pub(super) size: String,
     pub(super) category: String,
     pub(super) active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) product_base_id: Option<String>,
 }
 
 #[derive(Default, Deserialize, Debug)]
 #[allow(dead_code)]
 pub(super) struct ProductImportRow {
+    pub(super) id: String,
+}
+
+/// Payload for the `product_bases` collection.
+#[derive(Serialize, Clone)]
+pub(super) struct ProductBasePayload {
+    pub(super) brand: String,
+    pub(super) product_name: String,
+    pub(super) category: String,
+    pub(super) active: bool,
+}
+
+#[derive(Default, Deserialize, Debug)]
+#[allow(dead_code)]
+pub(super) struct ProductBaseImportRow {
     pub(super) id: String,
 }
 
@@ -250,6 +268,7 @@ mod tests {
             size: "100 ml".to_string(),
             category: String::new(),
             active: true,
+            product_base_id: None,
         };
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(json["brand"], "adolfo dominguez");

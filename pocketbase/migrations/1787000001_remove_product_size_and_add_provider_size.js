@@ -70,12 +70,14 @@ migrate(
       name: "size",
       type: "text",
     }));
-    // Add new unique on (provider_id, product_id, size)
+    // Add new unique on (provider_id, product_id, size) only when linked
+    // (allows duplicates when product_id is NULL/empty — the steady state
+    // before -match-products). Size empty '' is a single bucket for linked rows.
     providerProducts.indexes = [
       "CREATE UNIQUE INDEX idx_provider_products_provider_url ON provider_products (provider_id, provider_product_url)",
       "CREATE UNIQUE INDEX idx_provider_products_provider_name ON provider_products (provider_id, name)",
       "CREATE INDEX idx_provider_products_brand_id ON provider_products (brand_id)",
-      "CREATE UNIQUE INDEX idx_provider_products_provider_product_size ON provider_products (provider_id, COALESCE(product_id, ''), COALESCE(size, ''))",
+      "CREATE UNIQUE INDEX idx_provider_products_provider_product_size ON provider_products (provider_id, COALESCE(size, ''), product_id, COALESCE(size, '')) WHERE product_id != ''",
     ];
     app.save(providerProducts);
 

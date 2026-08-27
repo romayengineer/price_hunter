@@ -200,7 +200,7 @@ fn connect() -> anyhow::Result<Store> {
     Store::connect().context("cannot connect to PocketBase")
 }
 
-/// Imports `brand,name,size` rows from a CSV into the `products` table and
+/// Imports `brand,product_name` rows from a CSV into the `products` table and
 /// exits without opening a browser.
 fn import_products(path: &std::path::Path) -> anyhow::Result<()> {
     let store = connect()?;
@@ -234,7 +234,7 @@ fn export_matrix(path: &PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Writes the canonical products (`brand,product_name,size` columns) to a CSV
+/// Writes the canonical products (`brand,product_name` columns) to a CSV
 /// file and exits without opening a browser.
 fn export_products(path: &PathBuf) -> anyhow::Result<()> {
     let store = connect()?;
@@ -257,7 +257,7 @@ fn export_brands(path: &PathBuf) -> anyhow::Result<()> {
 }
 
 /// Deletes canonical products. With a CSV path, only products whose
-/// `(brand, product_name, size)` is absent from the CSV are removed;
+/// `(brand, product_name)` is absent from the CSV are removed;
 /// without a path, every product is removed. Each stale product is
 /// auto-unlinked from provider_products (kept unlinked) and its
 /// provider_product_matches are cascade-deleted before the product row
@@ -281,7 +281,7 @@ fn stale_products(
         let keys = csv_product_keys(csv_path)?;
         Ok(all
             .into_iter()
-            .filter(|p| !keys.contains(&(p.brand.clone(), p.product_name.clone(), p.size.clone())))
+            .filter(|p| !keys.contains(&(p.brand.clone(), p.product_name.clone())))
             .collect())
     } else {
         Ok(all)
@@ -332,7 +332,7 @@ fn confirm_delete_page(
     }
     println!("Next page ({} rows):", page.len());
     for (i, row) in page.iter().enumerate() {
-        println!("{}. {}\t{} [{} | {}]", i + 1, row.id, row.name, row.brand, row.size);
+        println!("{}. {}\t{} [{}]", i + 1, row.id, row.name, row.brand);
     }
     if !confirm(&format!("Delete these {} rows? [y/N]", page.len()), false)? {
         println!("Aborted ({} of {} deleted)", deleted, total);
@@ -341,10 +341,10 @@ fn confirm_delete_page(
     Ok(true)
 }
 
-/// Reads `(brand, product_name, size)` keys from a `brand,product_name,size`
+/// Reads `(brand, product_name)` keys from a `brand,product_name`
 /// CSV (header-aware via `csv::Reader`, trims whitespace, skips empty
 /// product_name rows).
-fn csv_product_keys(path: &std::path::Path) -> anyhow::Result<std::collections::HashSet<(String, String, String)>> {
+fn csv_product_keys(path: &std::path::Path) -> anyhow::Result<std::collections::HashSet<(String, String)>> {
     let mut reader = csv::Reader::from_path(path)
         .with_context(|| format!("could not read CSV at {}", path.display()))?;
     let mut keys = std::collections::HashSet::new();
@@ -352,11 +352,10 @@ fn csv_product_keys(path: &std::path::Path) -> anyhow::Result<std::collections::
         let record = result.with_context(|| format!("could not parse CSV at {}", path.display()))?;
         let brand = record.get(0).unwrap_or_default().trim().to_string();
         let product_name = record.get(1).unwrap_or_default().trim().to_string();
-        let size = record.get(2).unwrap_or_default().trim().to_string();
         if product_name.is_empty() {
             continue;
         }
-        keys.insert((brand, product_name, size));
+        keys.insert((brand, product_name));
     }
     Ok(keys)
 }
@@ -502,18 +501,12 @@ fn import_unmatched(yes: bool) -> anyhow::Result<()> {
         } else {
             &proposal.brand
         };
-        let size = if proposal.size.is_empty() {
-            "-"
-        } else {
-            &proposal.size
-        };
         println!(
-            "{}/{}  {} | {} | {}",
+            "{}/{}  {} | {}",
             i + 1,
             total,
             brand,
-            proposal.product_name,
-            size
+            proposal.product_name
         );
         println!("      from: {}", proposal.source_name);
         if !confirm_key("Insert as canonical product? (y/N)", yes)? {
@@ -521,12 +514,7 @@ fn import_unmatched(yes: bool) -> anyhow::Result<()> {
             println!("      skipped");
             continue;
         }
-        match store.create_product(
-            &proposal.brand,
-            &proposal.product_name,
-            &proposal.name,
-            &proposal.size,
-        )? {
+        match store.create_product(&proposal.brand, &proposal.product_name, &proposal.name)? {
             ProductInsert::Created => {
                 inserted += 1;
                 println!("      inserted: {}", proposal.name);

@@ -200,19 +200,17 @@ impl ProductCatalog for Store {
     }
 
     /// Inserts one canonical product (active) unless a product with the same
-    /// `(brand, product_name, size)` already exists.
+    /// `(brand, product_name)` already exists.
     fn create_product(
         &self,
         brand: &str,
         product_name: &str,
         name: &str,
-        size: &str,
     ) -> Result<ProductInsert, PriceStoreError> {
         let filter = format!(
-            "brand='{}' && product_name='{}' && size='{}'",
+            "brand='{}' && product_name='{}'",
             escape_filter(brand),
-            escape_filter(product_name),
-            escape_filter(size)
+            escape_filter(product_name)
         );
         let existing = self
             .client
@@ -231,7 +229,6 @@ impl ProductCatalog for Store {
                 brand: brand.to_string(),
                 product_name: product_name.to_string(),
                 name: name.to_string(),
-                size: size.to_string(),
                 category: String::new(),
                 active: true,
             })

@@ -12,9 +12,9 @@ use super::types::{
 };
 
 impl Store {
-    /// Imports rows from a CSV with `brand,name,size` columns into the
+    /// Imports rows from a CSV with `brand,product_name` columns into the
     /// `products` collection. Rows already present (unique on
-    /// `(brand, name, size)`) are skipped; the rest are created with
+    /// `(brand, product_name)`) are skipped; the rest are created with
     /// `active = true`. Returns the number of rows created.
     pub fn import_products_csv(&self, path: &std::path::Path) -> Result<usize, Error> {
         self.import_products_csv_inner(path).map_err(Error::from)
@@ -40,25 +40,23 @@ impl Store {
 
     /// Imports one CSV row into `products`, returning whether it was created
     /// or skipped as a duplicate. `product_name` keeps the raw CSV name while
-    /// `name` holds the full display name (brand + product_name + size).
+    /// `name` holds the full display name (brand + product_name).
     fn import_csv_row(&self, record: &csv::StringRecord) -> Result<RowOutcome> {
         let brand = record.get(0).unwrap_or_default().trim().to_string();
         let product_name = record.get(1).unwrap_or_default().trim().to_string();
-        let size = record.get(2).unwrap_or_default().trim().to_string();
         if product_name.is_empty() {
             return Ok(RowOutcome::Skipped);
         }
-        if self.find_product(&brand, &product_name, &size)?.is_some() {
+        if self.find_product(&brand, &product_name)?.is_some() {
             return Ok(RowOutcome::Skipped);
         }
-        let full_name = full_name(&brand, &product_name, &size);
+        let full_name = full_name(&brand, &product_name);
         self.client
             .records(PRODUCTS_COLLECTION)
             .create(ProductImportPayload {
                 brand,
                 product_name,
                 name: full_name,
-                size,
                 category: String::new(),
                 active: true,
             })
@@ -67,18 +65,16 @@ impl Store {
             .map(|_| RowOutcome::Created)
     }
 
-    /// Returns the existing canonical product for `(brand, product_name, size)`.
+    /// Returns the existing canonical product for `(brand, product_name)`.
     fn find_product(
         &self,
         brand: &str,
         product_name: &str,
-        size: &str,
     ) -> Result<Option<ProductImportRow>> {
         let filter = format!(
-            "brand='{}' && product_name='{}' && size='{}'",
+            "brand='{}' && product_name='{}'",
             escape_filter(brand),
-            escape_filter(product_name),
-            escape_filter(size)
+            escape_filter(product_name)
         );
         let existing = self
             .client

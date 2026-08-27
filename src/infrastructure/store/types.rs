@@ -17,7 +17,6 @@ pub(super) struct ProductImportPayload {
     pub(super) brand: String,
     pub(super) product_name: String,
     pub(super) name: String,
-    pub(super) size: String,
     pub(super) category: String,
     pub(super) active: bool,
 }
@@ -73,6 +72,7 @@ pub(super) struct ProviderProductPayload {
     pub(super) provider_product_url: String,
     pub(super) name: String,
     pub(super) brand_name: String,
+    pub(super) size: String,
     pub(super) last_seen_at: String,
 }
 
@@ -187,6 +187,7 @@ mod tests {
             provider_product_url: "/a/light-blue-homme-edp-50".to_string(),
             name: String::new(),
             brand_name: "dove".to_string(),
+            size: "50 ml".to_string(),
             last_seen_at: iso8601(123456),
         };
         let json = serde_json::to_value(&payload).unwrap();
@@ -194,6 +195,7 @@ mod tests {
         assert_eq!(json["provider_product_url"], "/a/light-blue-homme-edp-50");
         assert_eq!(json["name"], "");
         assert_eq!(json["brand_name"], "dove");
+        assert_eq!(json["size"], "50 ml");
         assert_eq!(json["last_seen_at"], "1970-01-02 10:17:36.000Z");
     }
 
@@ -246,16 +248,14 @@ mod tests {
         let payload = ProductImportPayload {
             brand: "adolfo dominguez".to_string(),
             product_name: "adn neroli ecstasy".to_string(),
-            name: "adolfo dominguez adn neroli ecstasy 100 ml".to_string(),
-            size: "100 ml".to_string(),
+            name: "adolfo dominguez adn neroli ecstasy".to_string(),
             category: String::new(),
             active: true,
         };
         let json = serde_json::to_value(&payload).unwrap();
         assert_eq!(json["brand"], "adolfo dominguez");
         assert_eq!(json["product_name"], "adn neroli ecstasy");
-        assert_eq!(json["name"], "adolfo dominguez adn neroli ecstasy 100 ml");
-        assert_eq!(json["size"], "100 ml");
+        assert_eq!(json["name"], "adolfo dominguez adn neroli ecstasy");
         assert_eq!(json["category"], "");
         assert_eq!(json["active"], true);
     }

@@ -146,6 +146,7 @@ migrate(
           required: false,
         },
         { name: "last_seen_at", type: "date", required: true },
+        { name: "brand_name", type: "text" },
         { name: "created", type: "autodate", onCreate: true, onUpdate: false },
         { name: "updated", type: "autodate", onCreate: true, onUpdate: true },
       ],

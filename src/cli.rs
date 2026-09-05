@@ -53,6 +53,8 @@ pub enum Command {
     ImportUnmatched,
     /// `-matrix-server`
     MatrixServer,
+    /// `-version` — print binary version and exit.
+    Version,
     /// `-auto-scrape <url> [-strategy <name>] [-button <css>] [-page-param <name>] [-window-threshold <n>] [-headless]`
     AutoScrape(AutoScrapeOptions),
     /// Default: open a browser, optionally at a URL, and poll for captures.
@@ -64,6 +66,9 @@ pub enum Command {
 #[allow(clippy::cognitive_complexity)]
 pub fn parse(args: &[String]) -> Command {
     let rest = &args[1..];
+    if rest.iter().any(|a| a == "-version") {
+        return Command::Version;
+    }
     if let Some(path) = arg_after(rest, "-import-products") {
         return Command::ImportProducts(path);
     }
@@ -189,6 +194,7 @@ pub async fn run(command: Command, yes: bool) -> anyhow::Result<()> {
         Command::DeleteUnbranded => delete_unbranded(yes),
         Command::ImportUnmatched => import_unmatched(yes),
         Command::MatrixServer => matrix_server().await,
+        Command::Version => print_version(),
         Command::AutoScrape(options) => auto_scrape(&options).await,
         Command::Browse(url) => browse(url).await,
     }
@@ -198,6 +204,13 @@ pub async fn run(command: Command, yes: bool) -> anyhow::Result<()> {
 fn connect() -> anyhow::Result<Store> {
     config::Config::ensure_template();
     Store::connect().context("cannot connect to PocketBase")
+}
+
+/// Prints the binary version and exits without side effects (no PocketBase,
+/// no browser, no config writes).
+fn print_version() -> anyhow::Result<()> {
+    println!("pricehunter {}", env!("CARGO_PKG_VERSION"));
+    Ok(())
 }
 
 /// Imports `brand,product_name` rows from a CSV into the `products` table and
@@ -941,6 +954,28 @@ mod tests {
             Command::ImportUnmatched
         );
         assert_eq!(parse(&args(&["-matrix-server"])), Command::MatrixServer);
+        assert_eq!(parse(&args(&["-version"])), Command::Version);
+    }
+
+    #[test]
+    fn version_flag_wins_over_other_flags() {
+        assert_eq!(
+            parse(&args(&["-version", "-match-products"])),
+            Command::Version
+        );
+        assert_eq!(
+            parse(&args(&["-matrix-server", "-version"])),
+            Command::Version
+        );
+        assert_eq!(
+            parse(&args(&["-import-brands", "b.csv", "-version"])),
+            Command::Version
+        );
+    }
+
+    #[tokio::test]
+    async fn version_runs_without_side_effects() {
+        assert!(run(Command::Version, false).await.is_ok());
     }
 
     #[test]

@@ -225,12 +225,16 @@ fn csv_product_keys(path: &std::path::Path) -> anyhow::Result<std::collections::
 fn match_products() -> anyhow::Result<()> {
     let store = connect()?;
     let summary = matching::match_products(&store, &mut StdoutReporter::new())?;
+    let pct = price_hunter_domain::reporter::progress_pct(
+        summary.matched, 
+        summary.provider_products
+    ).unwrap_or(100.0);
     println!(
         "Stored {} new matches ({} already stored)",
         summary.computed, summary.already_stored
     );
     println!(
-        "Matched {} of {} provider products",
+        "Matched {} of {} provider products {pct:.2}%",
         summary.matched, summary.provider_products
     );
     println!("Done: {} provider products matched", summary.matched);

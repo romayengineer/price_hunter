@@ -63,6 +63,21 @@ pub fn contains_confident_price(text: &str) -> bool {
     number_tokens(text).iter().any(|t| has_separator(t))
 }
 
+/// Classifies a div's own text as [`Price`](crate::model::Price) values.
+/// Thin [`classify_text`] adapter so the DOM traversal in
+/// `price_hunter_core` stays free of price-shape mapping.
+pub fn classify_prices(text: &str) -> Option<Vec<crate::model::Price>> {
+    classify_text(text).map(|prices| {
+        prices
+            .into_iter()
+            .map(|p| crate::model::Price {
+                value: p.value,
+                text: p.text,
+            })
+            .collect()
+    })
+}
+
 fn has_separator(token: &str) -> bool {
     token
         .chars()

@@ -66,6 +66,39 @@ pub fn brand_row_is_header_or_empty(name: &str) -> bool {
     name.is_empty() || name.eq_ignore_ascii_case("name")
 }
 
+/// Parses one `brand,product_name` CSV row (already trimmed by the caller
+/// contract): `None` when `product_name` is empty and the row must be skipped.
+pub fn parse_product_key(brand_cell: &str, product_name_cell: &str) -> Option<(String, String)> {
+    let brand = brand_cell.trim().to_string();
+    let product_name = product_name_cell.trim().to_string();
+    if product_name.is_empty() {
+        return None;
+    }
+    Some((brand, product_name))
+}
+
+/// Parses one `brand,product_name` CSV row into `(brand, product_name,
+/// full_name)`: `None` when `product_name` is empty. `full_name` joins brand
+/// and product name for the `products.name` display column.
+pub fn parse_product_row(
+    brand_cell: &str,
+    product_name_cell: &str,
+) -> Option<(String, String, String)> {
+    let (brand, product_name) = parse_product_key(brand_cell, product_name_cell)?;
+    let full = full_name(&brand, &product_name);
+    Some((brand, product_name, full))
+}
+
+/// Parses one single-column brand CSV cell: `None` for the `name` header row,
+/// blank rows and duplicates are handled by the caller.
+pub fn parse_brand_row(name_cell: &str) -> Option<String> {
+    let name = name_cell.trim();
+    if brand_row_is_header_or_empty(name) {
+        return None;
+    }
+    Some(name.to_string())
+}
+
 /// Builds one proposal from a single provider product, or `None` when it is
 /// already linked, splits into an empty product name, already exists in
 /// `products`, or duplicates an earlier proposal.

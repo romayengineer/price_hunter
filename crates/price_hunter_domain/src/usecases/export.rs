@@ -1,8 +1,7 @@
 //! Pure CSV tables for spreadsheet consumption (no `csv`/`anyhow`).
 //! Builds RFC-4180 CSV text manually so `price_hunter_domain` stays free of
-//! I/O crates. Callers that need `csv::Writer` byte-parity should use the
-//! thin adapter in `price_hunter_core`; the tables here are the source of
-//! truth for ordering, folding and escaping.
+//! I/O crates. The tables here are the source of truth for ordering, folding
+//! and escaping; infrastructure writes them straight to disk.
 
 use crate::model::{BrandRow, Matrix, ProductRow};
 use crate::text::ascii_fold;

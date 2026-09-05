@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
 
-use price_hunter_domain::matching::full_name;
 use price_hunter_domain::model::BrandRow;
 use price_hunter_domain::text::escape_filter;
-use price_hunter_domain::usecases::imports::brand_row_is_header_or_empty;
+use price_hunter_domain::usecases::imports::{parse_brand_row, parse_product_row};
 
 use super::Store;
 use super::error::Error;
@@ -43,15 +42,15 @@ impl Store {
     /// or skipped as a duplicate. `product_name` keeps the raw CSV name while
     /// `name` holds the full display name (brand + product_name).
     fn import_csv_row(&self, record: &csv::StringRecord) -> Result<RowOutcome> {
-        let brand = record.get(0).unwrap_or_default().trim().to_string();
-        let product_name = record.get(1).unwrap_or_default().trim().to_string();
-        if product_name.is_empty() {
+        let Some((brand, product_name, full_name)) = parse_product_row(
+            record.get(0).unwrap_or_default(),
+            record.get(1).unwrap_or_default(),
+        ) else {
             return Ok(RowOutcome::Skipped);
-        }
+        };
         if self.find_product(&brand, &product_name)?.is_some() {
             return Ok(RowOutcome::Skipped);
         }
-        let full_name = full_name(&brand, &product_name);
         self.client
             .records(PRODUCTS_COLLECTION)
             .create(ProductImportPayload {
@@ -116,18 +115,15 @@ impl Store {
     /// Imports one brand row, skipping empty values, the `name` header, and
     /// names already present.
     fn import_brand_row(&self, record: &csv::StringRecord) -> Result<RowOutcome> {
-        let name = record.get(0).unwrap_or_default().trim();
-        if brand_row_is_header_or_empty(name) {
+        let Some(name) = parse_brand_row(record.get(0).unwrap_or_default()) else {
             return Ok(RowOutcome::Skipped);
-        }
-        if self.find_brand(name)?.is_some() {
+        };
+        if self.find_brand(&name)?.is_some() {
             return Ok(RowOutcome::Skipped);
         }
         self.client
             .records(BRANDS_COLLECTION)
-            .create(BrandPayload {
-                name: name.to_string(),
-            })
+            .create(BrandPayload { name: name.clone() })
             .call()
             .map_err(|e| anyhow::anyhow!("could not import brand {name:?}: {e}"))
             .map(|_| RowOutcome::Created)

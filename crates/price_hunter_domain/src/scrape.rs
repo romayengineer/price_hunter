@@ -99,6 +99,27 @@ pub fn should_window_reload(count: usize, threshold: usize, has_page_param: bool
     has_page_param && threshold != 0 && count >= threshold
 }
 
+/// Whether windowing is disabled for `url` (threshold 0 or no page param).
+pub fn window_disabled(threshold: usize, url: &str, param: &str) -> bool {
+    use crate::net::url_contains_page_param;
+    threshold == 0 || !url_contains_page_param(url, param)
+}
+
+/// Whether a same-page reload should be skipped: the count is under the
+/// threshold or this page was already reloaded once.
+pub fn should_skip_window_reload(total: usize, threshold: usize, already_reloaded: bool) -> bool {
+    if !should_window_reload(total, threshold, true) {
+        return true;
+    }
+    already_reloaded
+}
+
+/// Whether a concrete strategy should be wrapped with windowing
+/// (`threshold != 0`).
+pub fn needs_window(threshold: usize) -> bool {
+    threshold != 0
+}
+
 /// A short display name for a strategy kind, for user-facing output.
 pub fn strategy_kind_name(kind: StrategyKind) -> &'static str {
     match kind {
@@ -286,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn default_window_threshold_is_120() {
+    fn default_window_threshold_matches_const() {
         assert_eq!(
             AutoScrapeOptions::default().window_threshold(),
             DEFAULT_WINDOW_THRESHOLD

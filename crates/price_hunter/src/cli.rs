@@ -138,15 +138,11 @@ fn stale_products(
     path: Option<&PathBuf>,
 ) -> anyhow::Result<Vec<price_hunter_domain::model::ProductRow>> {
     let all = store.list_all_products()?;
-    if let Some(csv_path) = path {
-        let keys = csv_product_keys(csv_path)?;
-        Ok(all
-            .into_iter()
-            .filter(|p| !keys.contains(&(p.brand.clone(), p.product_name.clone())))
-            .collect())
-    } else {
-        Ok(all)
-    }
+    let keys = path.map(|p| csv_product_keys(p.as_path())).transpose()?;
+    Ok(price_hunter_domain::usecases::prune::stale_products(
+        all,
+        keys.as_ref(),
+    ))
 }
 
 fn delete_product_pages(
@@ -155,9 +151,12 @@ fn delete_product_pages(
     yes: bool,
 ) -> anyhow::Result<()> {
     println!("{} canonical products to delete", stale.len());
-    let pages = stale.len().div_ceil(50);
+    let pages = price_hunter_domain::usecases::prune::page_count(stale.len());
     let mut deleted = 0usize;
-    for (page_index, page) in stale.chunks(50).enumerate() {
+    for (page_index, page) in stale
+        .chunks(price_hunter_domain::usecases::prune::DELETE_PAGE_SIZE)
+        .enumerate()
+    {
         if !confirm_delete_page(page, page_index, pages, yes, deleted, stale.len())? {
             return Ok(());
         }
@@ -203,20 +202,20 @@ fn confirm_delete_page(
 }
 
 /// Reads `(brand, product_name)` keys from a `brand,product_name`
-/// CSV (header-aware via `csv::Reader`, trims whitespace, skips empty
-/// product_name rows).
+/// CSV (header-aware via `csv::Reader`; row parsing lives in
+/// `domain::usecases::imports::parse_product_key`).
 fn csv_product_keys(path: &std::path::Path) -> anyhow::Result<std::collections::HashSet<(String, String)>> {
     let mut reader = csv::Reader::from_path(path)
         .with_context(|| format!("could not read CSV at {}", path.display()))?;
     let mut keys = std::collections::HashSet::new();
     for result in reader.records() {
         let record = result.with_context(|| format!("could not parse CSV at {}", path.display()))?;
-        let brand = record.get(0).unwrap_or_default().trim().to_string();
-        let product_name = record.get(1).unwrap_or_default().trim().to_string();
-        if product_name.is_empty() {
-            continue;
+        if let Some(key) = price_hunter_domain::usecases::imports::parse_product_key(
+            record.get(0).unwrap_or_default(),
+            record.get(1).unwrap_or_default(),
+        ) {
+            keys.insert(key);
         }
-        keys.insert((brand, product_name));
     }
     Ok(keys)
 }
@@ -601,7 +600,7 @@ fn update_state(state: &mut LoopState, source: Option<String>) {
     let Some(source) = source else {
         return;
     };
-    if state.last_source.as_deref() == Some(source.as_str()) {
+    if !price_hunter_domain::capture::source_changed(state.last_source.as_deref(), &source) {
         return;
     }
     state.last_source = Some(source.clone());
@@ -649,9 +648,7 @@ fn write_capture_with_rollback(
         Ok(path) => Some(path),
         Err(e) => {
             log::error!("Could not write capture for {url}: {e}");
-            for p in delta {
-                state.seen.remove(&p.delta_key());
-            }
+            price_hunter_domain::capture::rollback_seen(&mut state.seen, delta);
             None
         }
     }
@@ -682,12 +679,11 @@ impl StdoutReporter {
 
 impl Reporter for StdoutReporter {
     fn progress(&mut self, done: usize, total: usize) {
-        if total == 0 {
+        let Some(pct) = price_hunter_domain::reporter::progress_pct(done, total) else {
             println!();
             return;
-        }
-        let pct = done as f64 * 100.0 / total as f64;
-        if (pct - self.last_pct).abs() < 0.005 {
+        };
+        if !price_hunter_domain::reporter::should_emit_progress(self.last_pct, pct) {
             return;
         }
         self.last_pct = pct;

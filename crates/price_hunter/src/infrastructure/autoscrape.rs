@@ -45,11 +45,12 @@ impl DriverPage for WebDriver {
 }
 
 use crate::detect::{self, Detection};
-use price_hunter_domain::net::{extract_page, set_page_url, url_contains_page_param};
+use price_hunter_domain::net::{extract_page, set_page_url};
 use price_hunter_domain::ports::{BrandCatalog, ProductCatalog};
 use price_hunter_domain::scrape::{
     AutoScrapeOptions, HEURISTIC_SELECTORS, NO_GROWTH_LIMIT, NoGrowthTracker, POLL_INTERVAL,
-    StrategyKind, effective_strategy, should_window_reload, text_matches_heuristic,
+    StrategyKind, effective_strategy, needs_window, should_skip_window_reload,
+    text_matches_heuristic, window_disabled,
 };
 use crate::store::Store;
 
@@ -251,22 +252,23 @@ impl WindowedAutoScraper {
     }
 
     fn is_disabled_or_missing_param(&self, url: &str) -> bool {
-        self.threshold == 0 || !url_contains_page_param(url, &self.param)
+        window_disabled(self.threshold, url, &self.param)
     }
 
     fn should_skip_reload(&self, total: usize, page: u32, url: &str) -> bool {
-        if !should_window_reload(total, self.threshold, true) {
-            log::debug!(
-                "window: {total} products < threshold {}, continuing ({url})",
-                self.threshold
-            );
-            return true;
-        }
-        if self.reloaded.contains(&page) {
-            log::debug!(
-                "window: page {page} already reloaded, skipping same-url reload (total {total} >= {})",
-                self.threshold
-            );
+        let already = self.reloaded.contains(&page);
+        if should_skip_window_reload(total, self.threshold, already) {
+            if already && total >= self.threshold {
+                log::debug!(
+                    "window: page {page} already reloaded, skipping same-url reload (total {total} >= {})",
+                    self.threshold
+                );
+            } else {
+                log::debug!(
+                    "window: {total} products < threshold {}, continuing ({url})",
+                    self.threshold
+                );
+            }
             return true;
         }
         false
@@ -355,8 +357,7 @@ pub fn strategy_for(url: &str, options: &AutoScrapeOptions) -> Box<dyn AutoScrap
     };
     let threshold = options.window_threshold();
     let param = options.page_param_name();
-    let needs_window = threshold != 0;
-    if needs_window {
+    if needs_window(threshold) {
         Box::new(WindowedAutoScraper::new(
             inner,
             param.to_string(),
@@ -647,6 +648,7 @@ async fn scroll_y(driver: &WebDriver) -> Result<f64> {
 #[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
+    use price_hunter_domain::net::url_contains_page_param;
     use std::sync::Mutex as StdMutex;
 
     static WINDOW_TEST_LOCK: StdMutex<()> = StdMutex::new(());

@@ -1,6 +1,7 @@
 //! Pure capture rendering: JSON text and capture paths/deltas. No
 //! filesystem writes — infrastructure owns the I/O.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -69,6 +70,26 @@ pub fn build_capture_delta(detection: &Detection, delta: &[Product]) -> Detectio
     Detection {
         container,
         products: delta.to_vec(),
+    }
+}
+
+/// The first CSS class of a grid container (empty when the container has no
+/// classes). Persisted as `scrapes.container_class`.
+pub fn container_class(classes: &[String]) -> String {
+    classes.first().cloned().unwrap_or_default()
+}
+
+/// Whether `next` page source differs from the last polled one (`None` means
+/// first poll — always changed).
+pub fn source_changed(last_source: Option<&str>, next: &str) -> bool {
+    last_source != Some(next)
+}
+
+/// Removes every `delta` product key from `seen`, so a failed capture write
+/// can be retried on the next poll instead of silently dropping products.
+pub fn rollback_seen(seen: &mut HashSet<String>, delta: &[Product]) {
+    for product in delta {
+        seen.remove(&product.delta_key());
     }
 }
 

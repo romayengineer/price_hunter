@@ -3,10 +3,13 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 
+use price_hunter_domain::capture::container_class;
 use price_hunter_domain::model::{Detection, Product};
-use price_hunter_domain::matching::split_size;
 use price_hunter_domain::model::{ProviderProductRow, ProviderRow};
 use price_hunter_domain::time::{iso8601, now_secs};
+use price_hunter_domain::usecases::persist::{
+    price_unchanged, product_size, resolve_currency, stale_images,
+};
 
 use super::Store;
 use super::error::Error;
@@ -78,12 +81,7 @@ impl Store {
     ) -> Result<()> {
         let host = host_of(url);
         let provider = self.ensure_provider(&host)?;
-        let container_class = detection
-            .container
-            .classes
-            .first()
-            .cloned()
-            .unwrap_or_default();
+        let container_class = container_class(&detection.container.classes);
         let scrape = self.create_scrape(
             url,
             captured_at,
@@ -216,7 +214,7 @@ impl Store {
     ) -> Result<()> {
         let url = product.url.as_deref().unwrap_or("");
         let brand_name = product.brand.as_deref().unwrap_or("").to_string();
-        let size = split_size(&product.name).1.unwrap_or_default();
+        let size = product_size(&product.name);
         // Prefer lookup by enriched name, then fall back to URL (handles
         // renaming from short slug "THE-DREAMER-EDT" to enriched
         // "VERSACE THE DREAMER EAU DE TOILETTE 100 ML" for juleriaque).
@@ -260,11 +258,10 @@ impl Store {
                 }
             }
         };
-        let currency = product
-            .currency
-            .clone()
-            .or_else(|| provider.default_currency.clone())
-            .unwrap_or_default();
+        let currency = resolve_currency(
+            product.currency.as_deref(),
+            provider.default_currency.as_deref(),
+        );
         self.create_price(&provider_product_id, scrape_id, currency, product, is_new)?;
         self.sync_images(&provider_product_id, &product.images)?;
         Ok(())
@@ -376,7 +373,7 @@ impl Store {
         let last = self.agent_get_json::<Page<super::types::PriceRow>>(&last_url)?;
         if matches!(
             last.items.into_iter().next(),
-            Some(row) if row.price == product.price && row.currency == currency
+            Some(row) if price_unchanged(row.price, &row.currency, product.price, &currency)
         ) {
             return Ok(());
         }
@@ -396,11 +393,14 @@ impl Store {
         );
         let url = self.records_url(PROVIDER_PRODUCT_IMAGES_COLLECTION, Some(&filter), 100)?;
         let existing = self.agent_get_json::<Page<ProductImageRow>>(&url)?;
+        let existing_urls: Vec<String> =
+            existing.items.iter().map(|row| row.url.clone()).collect();
 
         for (position, url) in images.iter().enumerate() {
             self.upsert_image(provider_product_id, position, url, &existing.items)?;
         }
-        self.remove_stale_images(&existing.items, images)?;
+        let stale = stale_images(&existing_urls, images);
+        self.remove_stale_images(&existing.items, &stale)?;
         Ok(())
     }
 
@@ -435,8 +435,11 @@ impl Store {
     }
 
     fn remove_stale_images(&self, existing: &[ProductImageRow], images: &[String]) -> Result<()> {
+        let existing_urls: Vec<String> =
+            existing.iter().map(|row| row.url.clone()).collect();
+        let stale = stale_images(&existing_urls, images);
         for row in existing {
-            if !images.contains(&row.url) {
+            if stale.contains(&row.url) {
                 self.agent_delete(&self.record_url(PROVIDER_PRODUCT_IMAGES_COLLECTION, &row.id))?;
             }
         }

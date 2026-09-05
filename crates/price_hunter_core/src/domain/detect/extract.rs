@@ -7,7 +7,10 @@ use scraper::Html;
 use scraper::node::Node;
 
 use super::prices::classify_div;
-use price_hunter_domain::matching::{BRAND_MIN_SCORE, best_match, brand_coverage};
+use price_hunter_domain::matching::{
+    BRAND_MIN_SCORE, best_match, brand_coverage, brand_from_name, enrich_brand_with_opt,
+    is_valid_brand_text,
+};
 use price_hunter_domain::model::{Price, Product};
 use price_hunter_domain::text::{self as domain_text, collapse_whitespace};
 
@@ -378,23 +381,6 @@ fn is_brand_element(el: &scraper::node::Element) -> bool {
     }) || (el.name() == "strong" && classes.contains(&"brand") && classes.contains(&"product"))
 }
 
-/// Like `enrich_name_with_brand` but takes an explicit `brand` value.
-/// Returns `(Some(brand), enriched_name)` when a brand was supplied, otherwise
-/// `(None, name)`. The brand is prepended only when not already covered.
-fn enrich_brand_with_opt(name: String, brand: Option<String>) -> (Option<String>, String) {
-    let Some(b) = brand else {
-        return (None, name);
-    };
-    if b.trim().is_empty() {
-        return (None, name);
-    }
-    if brand_coverage(&name, &b) >= 1.0 {
-        return (Some(b), name);
-    }
-    let enriched = format!("{b} {name}");
-    (Some(b), enriched)
-}
-
 /// Extracts the brand for one card using catalog + trusted path + heuristic +
 /// name-split fallback.
 fn extract_brand_for_card(
@@ -411,14 +397,6 @@ fn extract_brand_for_card(
         return Some(b);
     }
     brand_from_name(name, brand_candidates)
-}
-
-/// Tries to split a brand out of `name` via catalog token coverage.
-/// Returns the matched catalog brand text (preserving its original case) when
-/// every token of a known brand appears in `name`.
-fn brand_from_name(name: &str, brand_candidates: &[(String, String)]) -> Option<String> {
-    best_match(name, brand_candidates, brand_coverage, BRAND_MIN_SCORE)
-        .map(|(_, text, _)| text.to_string())
 }
 
 /// Returns the brand-like text on a trusted signature inside `card`, if any.
@@ -452,13 +430,6 @@ fn trusted_brand_of(html: &Html, card_id: NodeId, trusted: &HashSet<String>) -> 
         return Some(text);
     }
     None
-}
-
-fn is_valid_brand_text(text: &str) -> bool {
-    !text.is_empty()
-        && text.chars().any(char::is_alphanumeric)
-        && !domain_text::contains_confident_price(text)
-        && text.chars().count() <= 32
 }
 
 fn signature_of(el: &scraper::node::Element) -> String {

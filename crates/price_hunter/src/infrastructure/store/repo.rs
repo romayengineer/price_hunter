@@ -14,7 +14,8 @@ use super::types::{
     ProviderPriceRow,
 };
 use price_hunter_domain::error::PriceStoreError;
-use price_hunter_domain::matching::{MIN_SCORE, MatchCandidate};
+use price_hunter_domain::matching::{MIN_SCORE, MatchCandidate, match_candidate};
+use price_hunter_domain::usecases::persist::fold_latest_prices;
 use price_hunter_domain::model::{
     BrandRow, MatchInsert, ProductInsert, ProductRow, ProviderMatchRow, ProviderProductRow,
     ProviderRow,
@@ -346,10 +347,8 @@ impl MatchStore for Store {
             .map_err(to_request)?;
         Ok(rows
             .into_iter()
-            .map(|r| MatchCandidate {
-                provider_product_id: r.provider_product_id,
-                product_id: r.product_id,
-                score: r.score,
+            .map(|r| {
+                match_candidate(&r.provider_product_id, &r.product_id, r.score)
             })
             .collect())
     }
@@ -517,11 +516,10 @@ impl PriceHistory for Store {
                 500,
             )
             .map_err(to_request)?;
-        let mut prices = HashMap::new();
-        for row in rows {
-            prices.entry(row.provider_product_id).or_insert(row.price);
-        }
-        Ok(prices)
+        Ok(fold_latest_prices(
+            rows.into_iter()
+                .map(|row| (row.provider_product_id, row.price)),
+        ))
     }
 }
 

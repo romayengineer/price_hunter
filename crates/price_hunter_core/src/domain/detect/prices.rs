@@ -211,13 +211,5 @@ fn is_div(el: &Element) -> bool {
 }
 
 pub(super) fn classify_div(text: &str) -> Option<Vec<Price>> {
-    domain_text::classify_text(text).map(|prices| {
-        prices
-            .into_iter()
-            .map(|p| Price {
-                value: p.value,
-                text: p.text,
-            })
-            .collect()
-    })
+    domain_text::classify_prices(text)
 }

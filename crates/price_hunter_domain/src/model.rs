@@ -136,7 +136,7 @@ pub struct MatrixRow {
 }
 
 /// The product × provider price matrix served by `GET /matrix`. Every row has
-/// at least one linked provider product (no all-blank rows); columns include
+/// prices at two or more providers (no single-provider rows); columns include
 /// every provider.
 #[derive(Serialize)]
 pub struct Matrix {

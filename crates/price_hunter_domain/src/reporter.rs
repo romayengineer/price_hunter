@@ -14,3 +14,21 @@ pub trait Reporter {
 pub struct NoopReporter;
 
 impl Reporter for NoopReporter {}
+
+/// Minimum percentage-point change before a redrawn progress line is worth
+/// emitting (avoids spamming the terminal on large backfills).
+pub const PROGRESS_EPSILON_PCT: f64 = 0.005;
+
+/// The `0–100` percentage for `done` out of `total`, or `None` when `total`
+/// is zero (caller should finish the line).
+pub fn progress_pct(done: usize, total: usize) -> Option<f64> {
+    if total == 0 {
+        return None;
+    }
+    Some(done as f64 * 100.0 / total as f64)
+}
+
+/// Whether `pct` differs enough from the last emitted value to redraw.
+pub fn should_emit_progress(last_pct: f64, pct: f64) -> bool {
+    (pct - last_pct).abs() >= PROGRESS_EPSILON_PCT
+}

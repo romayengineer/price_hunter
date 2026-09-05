@@ -93,8 +93,43 @@ pub fn best_match<'a>(
         })
 }
 
+/// Like `enrich_name_with_brand` but takes an explicit `brand` value.
+/// Returns `(Some(brand), enriched_name)` when a brand was supplied, otherwise
+/// `(None, name)`. The brand is prepended only when not already covered.
+pub fn enrich_brand_with_opt(name: String, brand: Option<String>) -> (Option<String>, String) {
+    let Some(b) = brand else {
+        return (None, name);
+    };
+    if b.trim().is_empty() {
+        return (None, name);
+    }
+    if brand_coverage(&name, &b) >= 1.0 {
+        return (Some(b), name);
+    }
+    let enriched = format!("{b} {name}");
+    (Some(b), enriched)
+}
+
+/// Tries to split a brand out of `name` via catalog token coverage.
+/// Returns the matched catalog brand text (preserving its original case) when
+/// every token of a known brand appears in `name`.
+pub fn brand_from_name(name: &str, brand_candidates: &[(String, String)]) -> Option<String> {
+    best_match(name, brand_candidates, brand_coverage, BRAND_MIN_SCORE)
+        .map(|(_, text, _)| text.to_string())
+}
+
+/// Whether card brand text looks like a real brand (non-empty, alphanumeric,
+/// no confident price, at most 32 chars).
+pub fn is_valid_brand_text(text: &str) -> bool {
+    use crate::text::contains_confident_price;
+    !text.is_empty()
+        && text.chars().any(char::is_alphanumeric)
+        && !contains_confident_price(text)
+        && text.chars().count() <= 32
+}
+
 fn collapse_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    crate::text::collapse_whitespace(text)
 }
 
 /// Recognized product-size units, case-insensitive.
@@ -218,6 +253,20 @@ pub fn strip_brand(name: &str, brand: &str) -> String {
         }
     }
     collapse_whitespace(&out.into_iter().collect::<String>())
+}
+
+/// Builds a [`MatchCandidate`] from stored row parts (provider product id,
+/// canonical product id, score).
+pub fn match_candidate(
+    provider_product_id: &str,
+    product_id: &str,
+    score: f64,
+) -> MatchCandidate {
+    MatchCandidate {
+        provider_product_id: provider_product_id.to_string(),
+        product_id: product_id.to_string(),
+        score,
+    }
 }
 
 /// Greedily assigns canonical products to provider products within one

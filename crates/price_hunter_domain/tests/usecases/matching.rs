@@ -6,7 +6,7 @@
 use price_hunter_domain::usecases::matching::{link_matches, match_products};
 use price_hunter_domain::reporter::NoopReporter;
 use price_hunter_domain::error::PriceStoreError;
-use price_hunter_domain::model::{ProductRow, ProviderProductRow, ProviderRow};
+use price_hunter_domain::model::{BrandRow, ProductRow, ProviderProductRow, ProviderRow};
 
 use super::fakes::FakeStore;
 
@@ -36,6 +36,33 @@ fn provider_product(id: &str, name: &str) -> ProviderProductRow {
         name: name.to_string(),
         product_id: None,
         brand_id: None,
+        ..Default::default()
+    }
+}
+
+fn brand(id: &str, name: &str) -> BrandRow {
+    BrandRow {
+        id: id.to_string(),
+        name: name.to_string(),
+    }
+}
+
+fn branded_product(id: &str, brand: &str, name: &str) -> ProductRow {
+    ProductRow {
+        id: id.to_string(),
+        name: name.to_string(),
+        brand: brand.to_string(),
+        ..Default::default()
+    }
+}
+
+fn branded_provider_product(id: &str, name: &str, brand_id: &str) -> ProviderProductRow {
+    ProviderProductRow {
+        id: id.to_string(),
+        provider_id: "prov1".to_string(),
+        name: name.to_string(),
+        product_id: None,
+        brand_id: Some(brand_id.to_string()),
         ..Default::default()
     }
 }
@@ -159,6 +186,65 @@ fn link_matches_relinks_from_stored_comparisons() {
         Some(&Some("p1".to_string()))
     );
     assert_eq!(fake.matches()[0].status, "confirmed");
+}
+
+#[test]
+fn match_products_partitions_by_brand_and_reports_pruning() {
+    let mut fake = FakeStore::default();
+    fake.providers.push(provider("prov1"));
+    fake.brands.push(brand("b1", "Diesel"));
+    fake.brands.push(brand("b2", "Adolfo Dominguez"));
+    fake.products
+        .push(branded_product("p1", "Diesel", "Diesel Fuel For Life EDT"));
+    fake.products.push(branded_product(
+        "p2",
+        "Adolfo Dominguez",
+        "Adolfo Dominguez ADN Neroli Ecstasy",
+    ));
+    fake.provider_products.push(branded_provider_product(
+        "pp1",
+        "Diesel Fuel For Life EDT 125 ml",
+        "b1",
+    ));
+    fake.provider_products.push(branded_provider_product(
+        "pp2",
+        "Adolfo Dominguez ADN Neroli Ecstasy 100 ml",
+        "b2",
+    ));
+
+    let summary = match_products(&fake, &mut NoopReporter).expect("matching should succeed");
+
+    // Same-brand exact pairs link; the two cross-brand pairs are never even
+    // scored (4 total, 2 evaluated, 2 skipped).
+    assert_eq!(summary.computed, 2);
+    assert_eq!(summary.matched, 2);
+    assert_eq!(summary.evaluated, 2);
+    assert_eq!(summary.skipped, 2);
+    let links = fake.product_links();
+    assert_eq!(links.get("pp1"), Some(&Some("p1".to_string())));
+    assert_eq!(links.get("pp2"), Some(&Some("p2".to_string())));
+    assert_eq!(fake.matches().len(), 2);
+}
+
+#[test]
+fn match_products_unknown_brand_still_scans_every_group() {
+    let mut fake = FakeStore::default();
+    fake.providers.push(provider("prov1"));
+    fake.brands.push(brand("b1", "Diesel"));
+    fake.products
+        .push(branded_product("p1", "Diesel", "Diesel Fuel For Life EDT"));
+    fake.provider_products.push(provider_product(
+        "pp1",
+        "Diesel Fuel For Life EDT 125 ml",
+    ));
+
+    let summary = match_products(&fake, &mut NoopReporter).expect("matching should succeed");
+
+    assert_eq!(summary.matched, 1);
+    assert_eq!(
+        fake.product_links().get("pp1"),
+        Some(&Some("p1".to_string()))
+    );
 }
 
 #[test]

@@ -53,6 +53,328 @@ pub fn similarity(a: &str, b: &str) -> f64 {
     strsim::sorensen_dice(&normalize(a), &normalize(b))
 }
 
+/// Comparison key for one name, precomputed once per `-match-products` run so
+/// the `N * M` pair loop never re-normalizes. `stripped` mirrors exactly what
+/// `strsim::sorensen_dice` sees (whitespace removed), and `bigrams` mirrors
+/// its bigram multiset, so [`dice_normalized`] agrees with [`similarity`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedName {
+    /// `normalize(raw)` (sorted tokens, single-space joined).
+    pub normalized: String,
+    /// `normalized` with all whitespace removed (what Dice bigrams run over).
+    pub stripped: String,
+    /// Byte length of `stripped` (`strsim` measures `.len()` in bytes).
+    pub byte_len: usize,
+    /// Bigram multiset of `stripped` (chars zipped with a one-char offset).
+    pub bigrams: Vec<(char, char)>,
+}
+
+/// Precomputes the comparison key for one raw name.
+pub fn prepare_name(raw: &str) -> PreparedName {
+    let normalized = normalize(raw);
+    let stripped: String = normalized.chars().filter(|c| !c.is_whitespace()).collect();
+    let byte_len = stripped.len();
+    let bigrams: Vec<(char, char)> = stripped.chars().zip(stripped.chars().skip(1)).collect();
+    PreparedName {
+        normalized,
+        stripped,
+        byte_len,
+        bigrams,
+    }
+}
+
+/// The provider-side comparison key: `name` with its trailing size stripped
+/// (falling back to the full name when nothing is left), matching the
+/// previous per-pair `split_size` behavior in the backfill.
+pub fn pp_match_key(name: &str) -> String {
+    let (without_size, _) = split_size(name);
+    if without_size.trim().is_empty() {
+        name.to_string()
+    } else {
+        without_size
+    }
+}
+
+/// Exact Sørensen-Dice over two precomputed keys. Agrees with
+/// `strsim::sorensen_dice` on the normalized inputs (same whitespace
+/// stripping, same `< 2` byte-length early-out, same multiset intersection).
+pub fn dice_normalized(a: &PreparedName, b: &PreparedName) -> f64 {
+    if a.stripped == b.stripped {
+        return 1.0;
+    }
+    if a.byte_len < 2 || b.byte_len < 2 {
+        return 0.0;
+    }
+    let mut counts: std::collections::HashMap<(char, char), usize> =
+        std::collections::HashMap::new();
+    for bigram in &a.bigrams {
+        *counts.entry(*bigram).or_insert(0) += 1;
+    }
+    let mut intersection = 0usize;
+    for bigram in &b.bigrams {
+        if let Some(count) = counts.get_mut(bigram)
+            && *count > 0
+        {
+            *count -= 1;
+            intersection += 1;
+        }
+    }
+    (2 * intersection) as f64 / (a.byte_len + b.byte_len - 2) as f64
+}
+
+/// Upper bound on the Dice score: the best two strings of these lengths can
+/// do (every bigram of the shorter overlapping). A pair with
+/// `max_dice < MIN_SCORE` can never reach the threshold — skipping it loses
+/// no recall.
+pub fn max_dice(a: &PreparedName, b: &PreparedName) -> f64 {
+    if a.stripped == b.stripped {
+        return 1.0;
+    }
+    if a.byte_len < 2 || b.byte_len < 2 {
+        return 0.0;
+    }
+    (2 * a.bigrams.len().min(b.bigrams.len())) as f64 / (a.byte_len + b.byte_len - 2) as f64
+}
+
+/// Whether the pair can still reach `MIN_SCORE` on length grounds alone.
+pub fn length_passes(a: &PreparedName, b: &PreparedName) -> bool {
+    max_dice(a, b) >= MIN_SCORE
+}
+
+/// Probe prefix length for the bigram prefix filter: with
+/// `tau = ceil(MIN_SCORE * n / 2)` the minimum multiset overlap any
+/// `>= MIN_SCORE` pair needs, the first `n - tau + 1` bigrams (rare-first)
+/// of the probe are guaranteed to hit the index. Using this lower-bound tau
+/// only ever enlarges the probe, so candidate generation stays exact.
+pub fn probe_prefix_len(bigram_count: usize) -> usize {
+    if bigram_count == 0 {
+        return 0;
+    }
+    let tau = ((MIN_SCORE * bigram_count as f64) / 2.0).ceil() as usize;
+    let tau = tau.max(1).min(bigram_count);
+    bigram_count - tau + 1
+}
+
+/// Canonical key for brand grouping: whitespace-collapsed, case- and
+/// accent-folded. Both sides (canonical `products.brand` and the resolved
+/// provider brand) go through this function so `"Adidas"` and `"adidas"`
+/// land in the same group. Empty input stays empty (= unknown brand).
+pub fn brand_key(name: &str) -> String {
+    crate::text::ascii_fold(&crate::text::collapse_whitespace(name))
+}
+
+/// Whether a (provider product, canonical product) pair survives brand
+/// partitioning. Unknown on either side (`None` / `""`) never filters — only
+/// two *known, different* brands are excluded. Run `-match-brands` first so
+/// provider brands are populated.
+pub fn brand_passes(provider_brand: Option<&str>, product_brand: &str) -> bool {
+    match provider_brand {
+        None | Some("") => true,
+        Some(pp) => product_brand.is_empty() || pp == product_brand,
+    }
+}
+
+/// One provider product with its precomputed comparison key and resolved
+/// brand (`None` = unknown brand, compared against every brand group).
+#[derive(Clone, Debug)]
+pub struct PreparedProvider {
+    /// Index into the caller's provider slice (stable for result mapping).
+    pub index: usize,
+    /// Precomputed key of [`pp_match_key`].
+    pub name: PreparedName,
+    /// Resolved canonical brand key, or `None` when unknown.
+    pub brand: Option<String>,
+}
+
+/// One canonical product with its precomputed comparison key and brand group
+/// (`""` = unknown brand, compared against every provider).
+#[derive(Clone, Debug)]
+pub struct PreparedProduct {
+    /// Index into the caller's product slice (stable for result mapping).
+    pub index: usize,
+    /// Precomputed key of the full display name.
+    pub name: PreparedName,
+    /// Canonical brand key, or `""` when the product has no brand.
+    pub brand: String,
+}
+
+/// How many pairs each blocking stage removed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BlockStats {
+    /// `providers.len() * products.len()` before blocking.
+    pub total_pairs: usize,
+    /// Pairs excluded by brand partitioning (two known, different brands).
+    pub brand_skipped: usize,
+    /// Pairs with no probe-prefix bigram in the index (cannot reach
+    /// `MIN_SCORE` by the prefix-filter guarantee).
+    pub prefix_skipped: usize,
+    /// Pairs that reached the length check but failed it.
+    pub length_skipped: usize,
+    /// Pairs that reached the exact Dice computation.
+    pub scored: usize,
+}
+
+/// Generates the exact candidate pairs to score: brand partition + bigram
+/// prefix filter, then a length check. Every pair scoring `>= MIN_SCORE`
+/// under [`similarity`] is contained in the output — the filters only remove
+/// pairs that provably cannot reach the threshold, plus cross-brand pairs
+/// (the domain rule: different known brands never link).
+///
+/// Returns `(candidates, stats)` where each candidate is a
+/// `(provider_index, product_index)` pair using the [`PreparedProvider::index`]
+/// / [`PreparedProduct::index`] values (not slice positions).
+pub fn plan_candidates(
+    providers: &[PreparedProvider],
+    products: &[PreparedProduct],
+) -> (Vec<(usize, usize)>, BlockStats) {
+    let mut stats = BlockStats {
+        total_pairs: providers.len() * products.len(),
+        ..BlockStats::default()
+    };
+    if providers.is_empty() || products.is_empty() {
+        return (Vec::new(), stats);
+    }
+    let index = BigramIndex::build(products);
+    let mut candidates = Vec::new();
+    for pp in providers {
+        plan_one_provider(pp, products, &index, &mut candidates, &mut stats);
+    }
+    (candidates, stats)
+}
+
+/// Bigram document frequencies plus the full bigram -> product postings over
+/// the canonical products. The postings are a superset of any prefix index,
+/// so probing them with the provider's rare-first prefix stays exact.
+struct BigramIndex {
+    doc_freq: std::collections::HashMap<(char, char), usize>,
+    postings: std::collections::HashMap<(char, char), Vec<usize>>,
+}
+
+impl BigramIndex {
+    fn build(products: &[PreparedProduct]) -> Self {
+        let mut doc_freq = std::collections::HashMap::new();
+        let mut postings: std::collections::HashMap<(char, char), Vec<usize>> =
+            std::collections::HashMap::new();
+        for (pos, product) in products.iter().enumerate() {
+            let mut seen = std::collections::HashSet::new();
+            for bigram in &product.name.bigrams {
+                if seen.insert(*bigram) {
+                    *doc_freq.entry(*bigram).or_insert(0) += 1;
+                    postings.entry(*bigram).or_default().push(pos);
+                }
+            }
+        }
+        Self { doc_freq, postings }
+    }
+
+    /// Rare-first rank for probe ordering (unseen bigrams sort last; they
+    /// match nothing and are dropped from the probe).
+    fn rank(&self, bigram: &(char, char)) -> (usize, (char, char)) {
+        (
+            self.doc_freq.get(bigram).copied().unwrap_or(usize::MAX),
+            *bigram,
+        )
+    }
+}
+
+/// Plans the candidates for one provider product: brand universe, then the
+/// prefix probe (or exact matching for tiny names), then the length check.
+fn plan_one_provider(
+    pp: &PreparedProvider,
+    products: &[PreparedProduct],
+    index: &BigramIndex,
+    candidates: &mut Vec<(usize, usize)>,
+    stats: &mut BlockStats,
+) {
+    // Universe under brand partitioning: same-brand + unknown-brand
+    // products, or everything when the provider brand is unknown.
+    let universe: Vec<usize> = products
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| brand_passes(pp.brand.as_deref(), &p.brand))
+        .map(|(pos, _)| pos)
+        .collect();
+    stats.brand_skipped += products.len() - universe.len();
+    if universe.is_empty() {
+        return;
+    }
+    if pp.name.bigrams.is_empty() {
+        plan_tiny_provider(pp, products, &universe, candidates, stats);
+        return;
+    }
+    let hits = probe_hits(pp, &universe, index);
+    stats.prefix_skipped += universe.len() - hits.len();
+    for pos in hits {
+        let product = &products[pos];
+        if !length_passes(&pp.name, &product.name) {
+            stats.length_skipped += 1;
+            continue;
+        }
+        candidates.push((pp.index, product.index));
+        stats.scored += 1;
+    }
+}
+
+/// Tiny names (no bigrams) only match exact-equal strings (Dice 1.0).
+fn plan_tiny_provider(
+    pp: &PreparedProvider,
+    products: &[PreparedProduct],
+    universe: &[usize],
+    candidates: &mut Vec<(usize, usize)>,
+    stats: &mut BlockStats,
+) {
+    for pos in universe {
+        let product = &products[*pos];
+        if pp.name.stripped == product.name.stripped {
+            candidates.push((pp.index, product.index));
+            stats.scored += 1;
+        } else {
+            stats.length_skipped += 1;
+        }
+    }
+}
+
+/// Union of posting lists for the provider's rare-first probe prefix,
+/// restricted to the brand universe.
+fn probe_hits(
+    pp: &PreparedProvider,
+    universe: &[usize],
+    index: &BigramIndex,
+) -> std::collections::HashSet<usize> {
+    // Rare-first multiset order; the probe is the first `probe_prefix_len`
+    // entries (duplicates kept for the prefix-size guarantee), looked up as
+    // distinct bigrams present in the index.
+    let mut ordered = pp.name.bigrams.clone();
+    ordered.sort_by_key(|bigram| index.rank(bigram));
+    let prefix_len = probe_prefix_len(ordered.len()).min(ordered.len());
+    let in_universe: std::collections::HashSet<usize> = universe.iter().copied().collect();
+    let mut hits = std::collections::HashSet::new();
+    let mut seen_probe = std::collections::HashSet::new();
+    for bigram in ordered.into_iter().take(prefix_len) {
+        if !index.doc_freq.contains_key(&bigram) || !seen_probe.insert(bigram) {
+            continue;
+        }
+        collect_postings(index, &bigram, &in_universe, &mut hits);
+    }
+    hits
+}
+
+/// Inserts the in-universe products posted under `bigram` into `hits`.
+fn collect_postings(
+    index: &BigramIndex,
+    bigram: &(char, char),
+    in_universe: &std::collections::HashSet<usize>,
+    hits: &mut std::collections::HashSet<usize>,
+) {
+    if let Some(posted) = index.postings.get(bigram) {
+        for pos in posted {
+            if in_universe.contains(pos) {
+                hits.insert(*pos);
+            }
+        }
+    }
+}
+
 /// Fraction of the brand's normalized tokens that appear in `name`
 /// (0.0–1.0). Used to detect a brand embedded in a long product name, where
 /// Sørensen-Dice scores too low (the brand is a small slice of the whole).
@@ -466,6 +788,165 @@ mod tests {
         assert_eq!(brand_coverage("adolfo neroli", "adolfo dominguez"), 0.5);
         // name carries no brand token
         assert_eq!(brand_coverage("diesel", "adolfo dominguez"), 0.0);
+    }
+
+    #[test]
+    fn dice_normalized_agrees_with_similarity() {
+        let pairs = [
+            ("Diesel Fuel For Life EDT 125 ml", "diesel fuel for life edt"),
+            ("Light Blue Homme EDP 50", "EDP 50 Light Blue Homme"),
+            ("adn neroli ecstasy", "rose spicy edp"),
+            ("abcd", "abce"),
+            ("a", "a"),
+            ("a", "b"),
+            ("", ""),
+            ("", "nonempty"),
+            ("ADN Neroli Ectasy!!", "adn neroli ecstasy 100 ml"),
+            ("Kenzo Flower EDP 100 ml", "flower by kenzo edp 100ml"),
+            ("Dior Sauvage EDT 100 ml", "sauvage parfum 60 ml"),
+        ];
+        for (a, b) in pairs {
+            let expected = similarity(a, &pp_match_key(b));
+            let got = dice_normalized(&prepare_name(a), &prepare_name(&pp_match_key(b)));
+            assert!(
+                (expected - got).abs() < 1e-9,
+                "dice mismatch for {a:?} vs {b:?}: {expected} vs {got}"
+            );
+            // The length filter must never exclude a pair that reaches the
+            // threshold (necessary condition, no recall lost).
+            if expected >= MIN_SCORE {
+                assert!(
+                    length_passes(&prepare_name(a), &prepare_name(&pp_match_key(b))),
+                    "length filter excluded {a:?} vs {b:?} scoring {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pp_match_key_strips_size_with_fallback() {
+        assert_eq!(
+            pp_match_key("Diesel Fuel For Life EDT 125 ml"),
+            "Diesel Fuel For Life EDT"
+        );
+        assert_eq!(pp_match_key("132 g"), "132 g");
+        assert_eq!(pp_match_key("One Million EDT"), "One Million EDT");
+    }
+
+    #[test]
+    fn brand_key_folds_case_and_accents() {
+        assert_eq!(brand_key("Adidas"), brand_key("adidas"));
+        assert_eq!(brand_key("  Carolina   Herrera "), "carolina herrera");
+        assert_eq!(brand_key(""), "");
+    }
+
+    #[test]
+    fn brand_passes_only_excludes_two_known_different_brands() {
+        assert!(brand_passes(Some("diesel"), "diesel"));
+        assert!(brand_passes(None, "diesel"));
+        assert!(brand_passes(Some(""), "diesel"));
+        assert!(brand_passes(Some("diesel"), ""));
+        assert!(brand_passes(None, ""));
+        assert!(!brand_passes(Some("diesel"), "adolfo dominguez"));
+    }
+
+    /// Every pair reaching `MIN_SCORE` under brute-force `similarity` must
+    /// appear in the planned candidates (unknown brands: no brand pruning).
+    #[test]
+    fn plan_candidates_keeps_every_above_threshold_pair() {
+        let providers = [
+            "Diesel Fuel For Life EDT 125 ml",
+            "Adolfo Dominguez ADN Neroli Ecstasy 100 ml",
+            "Kenzo Flower EDP 100 ml",
+            "abcd",
+            "Completely Unrelated Name XYZ",
+        ];
+        let products = [
+            "Diesel Fuel For Life EDT",
+            "Adolfo Dominguez ADN Neroli Ectasy",
+            "Flower by Kenzo EDP 100 ml",
+            "abce",
+            "Rose Spicy EDP",
+        ];
+        let prepared_providers: Vec<PreparedProvider> = providers
+            .iter()
+            .enumerate()
+            .map(|(index, name)| PreparedProvider {
+                index,
+                name: prepare_name(&pp_match_key(name)),
+                brand: None,
+            })
+            .collect();
+        let prepared_products: Vec<PreparedProduct> = products
+            .iter()
+            .enumerate()
+            .map(|(index, name)| PreparedProduct {
+                index,
+                name: prepare_name(name),
+                brand: String::new(),
+            })
+            .collect();
+        let (candidates, stats) = plan_candidates(&prepared_providers, &prepared_products);
+        let planned: std::collections::HashSet<(usize, usize)> =
+            candidates.into_iter().collect();
+        assert_eq!(
+            stats.total_pairs,
+            providers.len() * products.len()
+        );
+        assert_eq!(
+            stats.scored + stats.prefix_skipped + stats.length_skipped,
+            stats.total_pairs - stats.brand_skipped
+        );
+        for (i, pp) in providers.iter().enumerate() {
+            for (j, product) in products.iter().enumerate() {
+                if similarity(&pp_match_key(pp), product) >= MIN_SCORE {
+                    assert!(
+                        planned.contains(&(i, j)),
+                        "lost above-threshold pair {pp:?} vs {product:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn plan_candidates_partitions_known_brands() {
+        let prepared_providers = vec![
+            PreparedProvider {
+                index: 0,
+                name: prepare_name(&pp_match_key("Diesel Fuel For Life EDT 125 ml")),
+                brand: Some("diesel".to_string()),
+            },
+            PreparedProvider {
+                index: 1,
+                name: prepare_name(&pp_match_key("Diesel Fuel For Life EDT 125 ml")),
+                brand: None,
+            },
+        ];
+        let prepared_products = vec![
+            PreparedProduct {
+                index: 0,
+                name: prepare_name("Diesel Fuel For Life EDT"),
+                brand: "diesel".to_string(),
+            },
+            PreparedProduct {
+                index: 1,
+                name: prepare_name("Diesel Fuel For Life EDT"),
+                brand: "adolfo dominguez".to_string(),
+            },
+        ];
+        let (candidates, stats) = plan_candidates(&prepared_providers, &prepared_products);
+        let planned: std::collections::HashSet<(usize, usize)> =
+            candidates.into_iter().collect();
+        // Same-brand exact pair is kept; the cross-brand twin is pruned even
+        // though its name is identical (domain rule: brands never cross).
+        assert!(planned.contains(&(0, 0)));
+        assert!(!planned.contains(&(0, 1)));
+        assert!(stats.brand_skipped >= 1);
+        // An unknown-brand provider with an exact name still reaches every
+        // brand group (no brand pruning without a known provider brand).
+        assert!(planned.contains(&(1, 0)));
+        assert!(planned.contains(&(1, 1)));
     }
 
     #[test]

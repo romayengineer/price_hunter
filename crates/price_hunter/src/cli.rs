@@ -9,8 +9,9 @@ use anyhow::Context;
 use thirtyfour::prelude::*;
 
 use price_hunter_domain::reporter::Reporter;
+use price_hunter_domain::scrape::{AutoScrapeOptions, StrategyKind};
 use price_hunter_domain::usecases::{brands, imports, matching, matrix};
-use price_hunter::autoscrape::{self, AutoScrapeOptions, StrategyKind};
+use price_hunter::autoscrape;
 use price_hunter::browser;
 use price_hunter::capture;
 use price_hunter::config;
@@ -596,15 +597,15 @@ async fn auto_scrape_with_driver(
     let mut strategy = autoscrape::strategy_for(url, options);
     println!(
         "Auto-scraping {url} with {} strategy",
-        strategy_kind_name(autoscrape::effective_strategy(url, options))
+        strategy_kind_name(price_hunter_domain::scrape::effective_strategy(url, options))
     );
 
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let detection = autoscrape::scrape_until_no_growth_with_store(
         driver,
         strategy.as_mut(),
-        autoscrape::SETTLE,
-        autoscrape::MAX_STEPS,
+        price_hunter_domain::scrape::SETTLE,
+        price_hunter_domain::scrape::MAX_STEPS,
         Some(store),
         |detection| {
             let new_products = price_hunter_domain::model::product_delta(&detection.products, &mut seen);

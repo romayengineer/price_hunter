@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use thirtyfour::prelude::*;
 
-use price_hunter::autoscrape::{self, AutoScrapeOptions};
+use price_hunter::autoscrape;
+use price_hunter_domain::scrape::AutoScrapeOptions;
 use price_hunter::browser;
 
 const PARFUMERIE_URL: &str = "https://www.parfumerie.com.ar/fragancias";

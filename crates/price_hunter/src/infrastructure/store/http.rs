@@ -1,4 +1,4 @@
-pub(super) use crate::infrastructure::util::host_of;
+pub(super) use price_hunter_domain::net::host_of;
 
 /// Escapes a value for use inside a PocketBase filter string literal. Single
 /// quotes and backslashes must be backslash-escaped or the filter parses

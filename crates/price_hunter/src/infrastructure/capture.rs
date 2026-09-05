@@ -51,7 +51,7 @@ pub fn write_capture(dir: &str, url: &str, detection: &Detection) -> std::io::Re
 }
 
 fn capture_dir(base: &str, url: &str) -> PathBuf {
-    let host = crate::infrastructure::util::host_of(url);
+    let host = price_hunter_domain::net::host_of(url);
     if host.is_empty() {
         PathBuf::from(base)
     } else {

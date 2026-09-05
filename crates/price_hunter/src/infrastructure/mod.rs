@@ -10,4 +10,3 @@ pub mod instance;
 pub mod matrix_server;
 pub mod store;
 pub mod terminal;
-mod util;

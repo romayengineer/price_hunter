@@ -690,9 +690,6 @@ impl Reporter for StdoutReporter {
         use std::io::Write;
         print!("\rProgress: {pct:.2}%");
         let _ = std::io::stdout().flush();
-        if done == total {
-            println!();
-        }
     }
 }
 

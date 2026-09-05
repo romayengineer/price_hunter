@@ -256,6 +256,7 @@ impl<S: PriceStore> CandidateBackfill<'_, S> {
             self.reporter.progress(done + 1, total);
         }
         self.reporter.progress(total, total);
+        println!();
         Ok(computed)
     }
 

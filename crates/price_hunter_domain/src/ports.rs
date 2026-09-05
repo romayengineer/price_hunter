@@ -10,9 +10,9 @@
 
 use std::collections::HashMap;
 
-use crate::domain::error::PriceStoreError;
-use crate::domain::matching::MatchCandidate;
-use crate::domain::model::{
+use crate::error::PriceStoreError;
+use crate::matching::MatchCandidate;
+use crate::model::{
     BrandRow, MatchInsert, ProductInsert, ProductRow, ProviderMatchRow, ProviderProductRow,
     ProviderRow,
 };

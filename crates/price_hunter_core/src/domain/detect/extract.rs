@@ -9,6 +9,7 @@ use scraper::node::Node;
 use super::prices::{classify_div, contains_confident_price};
 use super::{Price, Product};
 use crate::domain::matching::{BRAND_MIN_SCORE, best_match, brand_coverage};
+use price_hunter_domain::text::collapse_whitespace;
 
 pub(super) fn extract_products(
     html: &Html,
@@ -174,58 +175,12 @@ fn guess_name(html: &Html, id: NodeId, container_id: NodeId) -> String {
     }
 }
 
-/// Recognized product-size units, case-insensitive.
-fn is_size_unit(unit: &str) -> bool {
-    matches!(
-        unit.to_ascii_lowercase().as_str(),
-        "ml" | "g" | "gr" | "l" | "lt"
-    )
-}
-
-/// Returns the first `N unit` substring in `text` (e.g. `100 ml`, `100ml`,
-/// `100 Ml`, `X50ML`, `132 g`), preserving its original spacing/case. Used to
-/// detect whether a name already carries its size and to lift the size out of
-/// SKU selectors and product URLs.
-pub(super) fn find_size_in_text(text: &str) -> Option<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if !chars[i].is_ascii_digit() {
-            i += 1;
-            continue;
-        }
-        let num_start = i;
-        while i < chars.len() && chars[i].is_ascii_digit() {
-            i += 1;
-        }
-        let mut j = i;
-        if j < chars.len() && chars[j].is_whitespace() {
-            j += 1;
-        }
-        let unit_start = j;
-        while j < chars.len() && chars[j].is_ascii_alphabetic() {
-            j += 1;
-        }
-        if unit_start < j && is_size_unit(&chars[unit_start..j].iter().collect::<String>()) {
-            let matched: String = chars[num_start..j].iter().collect();
-            return Some(collapse_whitespace(&matched));
-        }
-        i = j;
-    }
-    None
-}
-
-/// Whether `name` already carries a size (number + unit).
-pub(super) fn has_size(name: &str) -> bool {
-    find_size_in_text(name).is_some()
-}
-
-/// Whether `name` ends in a bare number (e.g. `edp 50`) with no unit.
-pub(super) fn has_trailing_bare_number(name: &str) -> bool {
-    name.split_whitespace()
-        .next_back()
-        .is_some_and(|token| !token.is_empty() && token.chars().all(|c| c.is_ascii_digit()))
-}
+/// Re-exported pure string helpers (single source of truth lives in
+/// `price_hunter_domain::text`; kept here so `super::extract::…` paths and
+/// unit tests keep working).
+pub(super) use price_hunter_domain::text::{
+    find_size_in_text, has_size, has_trailing_bare_number, size_from_url,
+};
 
 /// Lifts the product size out of a VTEX-style SKU selector inside the card.
 /// Prefers the option marked `--selected`, falling back to the first one that
@@ -259,11 +214,6 @@ pub(super) fn size_from_sku_selector(html: &Html, card_id: NodeId) -> Option<Str
         }
     }
     first
-}
-
-/// Lifts the product size out of a product URL slug (e.g. `...-100ml-...`).
-pub(super) fn size_from_url(url: &str) -> Option<String> {
-    find_size_in_text(url)
 }
 
 /// Lifts the size out of a FastStore / generic card (juleriaque):
@@ -609,10 +559,6 @@ fn learn_trusted_signatures(
     trusted
 }
 
-fn collapse_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 #[allow(clippy::cognitive_complexity)] // heuristic DOM walk — splitting hurts readability
 pub(super) fn find_structured_name(node: &NodeRef<'_, Node>) -> Option<String> {
     // FastStore / juleriaque: h2[data-id="product-name"] (+ optional h4[data-id="product-description"])
@@ -760,22 +706,10 @@ fn product_link(html: &Html, card_id: NodeId) -> Option<String> {
     titled.or(fallback)
 }
 
-/// True for links that don't point anywhere useful for a product page:
-/// `#` anchors, `javascript:` stubs, `mailto:`/`tel:`, and bare fragment
-/// links (e.g. `https://site/category#`). Those are usually icon/button
-/// links that appear before the real product link in the card.
+/// True for links that don't point anywhere useful for a product page.
+/// Delegates to the pure domain helper.
 fn is_placeholder_href(href: &str) -> bool {
-    let href = href.trim();
-    if href.is_empty() || href == "#" {
-        return true;
-    }
-    if ["javascript:", "mailto:", "tel:", "data:"]
-        .iter()
-        .any(|prefix| href.starts_with(prefix))
-    {
-        return true;
-    }
-    href.ends_with('#')
+    price_hunter_domain::text::is_placeholder_href(href)
 }
 
 /// Whether the anchor carries any text of its own (a product-title link) as

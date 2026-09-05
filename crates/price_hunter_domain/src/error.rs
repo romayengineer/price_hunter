@@ -2,16 +2,21 @@
 //! `anyhow`, which is reserved for application/CLI code; infrastructure adapters
 //! map their concrete failures into this type at the boundary.
 
+use std::fmt::{Display, Formatter};
+
 /// Errors surfaced by the [`PriceStore`](super::ports::PriceStore) port.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum PriceStoreError {
     /// A store request failed (HTTP, transport, parse or auth).
-    #[error("store request failed: {0}")]
     Request(String),
 }
 
-impl From<anyhow::Error> for PriceStoreError {
-    fn from(e: anyhow::Error) -> Self {
-        PriceStoreError::Request(format!("{e:#}"))
+impl Display for PriceStoreError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PriceStoreError::Request(msg) => write!(f, "store request failed: {msg}"),
+        }
     }
 }
+
+impl std::error::Error for PriceStoreError {}

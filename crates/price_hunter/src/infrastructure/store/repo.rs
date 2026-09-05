@@ -23,6 +23,12 @@ use crate::domain::ports::{
     BrandCatalog, MatchStore, PriceHistory, ProductCatalog, ProviderCatalog,
 };
 
+/// Maps an `anyhow` failure at the infrastructure boundary into the domain
+/// port error (the domain crate itself stays `anyhow`-free).
+fn to_request(e: anyhow::Error) -> PriceStoreError {
+    PriceStoreError::Request(format!("{e:#}"))
+}
+
 impl Store {
     /// Lists every record of `collection` with an optional filter and sort,
     /// paginating `per_page` rows at a time until the collection is exhausted.
@@ -192,11 +198,13 @@ impl Store {
 
 impl ProductCatalog for Store {
     fn list_products(&self) -> Result<Vec<ProductRow>, PriceStoreError> {
-        Ok(self.list_all(PRODUCTS_COLLECTION, Some("active=true"), None, 100)?)
+        self.list_all(PRODUCTS_COLLECTION, Some("active=true"), None, 100)
+            .map_err(to_request)
     }
 
     fn list_all_products(&self) -> Result<Vec<ProductRow>, PriceStoreError> {
-        Ok(self.list_all(PRODUCTS_COLLECTION, None, None, 100)?)
+        self.list_all(PRODUCTS_COLLECTION, None, None, 100)
+            .map_err(to_request)
     }
 
     /// Inserts one canonical product (active) unless a product with the same
@@ -219,7 +227,8 @@ impl ProductCatalog for Store {
             .filter(&filter)
             .per_page(1)
             .call::<ProductImportRow>()
-            .context("could not look up product")?;
+            .context("could not look up product")
+            .map_err(to_request)?;
         if existing.items.into_iter().next().is_some() {
             return Ok(ProductInsert::AlreadyExists);
         }
@@ -233,7 +242,8 @@ impl ProductCatalog for Store {
                 active: true,
             })
             .call()
-            .map_err(|e| anyhow::anyhow!("could not create product: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("could not create product: {e}"))
+            .map_err(to_request)?;
         Ok(ProductInsert::Created)
     }
 
@@ -251,7 +261,8 @@ impl ProductCatalog for Store {
                 .records(PROVIDER_PRODUCTS_COLLECTION)
                 .update(&pp.id, ProductLinkPayload { product_id: None })
                 .call()
-                .map_err(|e| anyhow::anyhow!("could not unlink {pp_id}: {e}", pp_id = pp.id))?;
+                .map_err(|e| anyhow::anyhow!("could not unlink {pp_id}: {e}", pp_id = pp.id))
+                .map_err(to_request)?;
         }
         // 2. Cascade-delete matches for this canonical product
         let matches: Vec<ProviderMatchRow> = self
@@ -270,17 +281,20 @@ impl ProductCatalog for Store {
 
 impl BrandCatalog for Store {
     fn list_brands(&self) -> Result<Vec<BrandRow>, PriceStoreError> {
-        Ok(self.list_all(BRANDS_COLLECTION, None, None, 500)?)
+        self.list_all(BRANDS_COLLECTION, None, None, 500)
+            .map_err(to_request)
     }
 }
 
 impl ProviderCatalog for Store {
     fn list_providers(&self) -> Result<Vec<ProviderRow>, PriceStoreError> {
-        Ok(self.list_all(PROVIDERS_COLLECTION, None, None, 100)?)
+        self.list_all(PROVIDERS_COLLECTION, None, None, 100)
+            .map_err(to_request)
     }
 
     fn list_provider_products(&self) -> Result<Vec<ProviderProductRow>, PriceStoreError> {
-        Ok(self.list_all(PROVIDER_PRODUCTS_COLLECTION, None, None, 100)?)
+        self.list_all(PROVIDER_PRODUCTS_COLLECTION, None, None, 100)
+            .map_err(to_request)
     }
 
     fn update_brand_link(
@@ -297,7 +311,8 @@ impl ProviderCatalog for Store {
                 },
             )
             .call()
-            .map_err(|e| anyhow::anyhow!("could not update brand link: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("could not update brand link: {e}"))
+            .map_err(to_request)?;
         Ok(())
     }
 
@@ -309,9 +324,11 @@ impl ProviderCatalog for Store {
             PROVIDER_PRODUCT_IMAGES_COLLECTION,
             PROVIDER_PRODUCT_PRICES_COLLECTION,
         ] {
-            self.delete_related(collection, provider_product_id)?;
+            self.delete_related(collection, provider_product_id)
+                .map_err(to_request)?;
         }
-        self.agent_destroy(PROVIDER_PRODUCTS_COLLECTION, provider_product_id)?;
+        self.agent_destroy(PROVIDER_PRODUCTS_COLLECTION, provider_product_id)
+            .map_err(to_request)?;
         Ok(())
     }
 }
@@ -319,12 +336,14 @@ impl ProviderCatalog for Store {
 impl MatchStore for Store {
     fn list_above_threshold_candidates(&self) -> Result<Vec<MatchCandidate>, PriceStoreError> {
         let filter = format!("score>={MIN_SCORE}");
-        let rows = self.list_all::<ProviderMatchRow>(
-            PROVIDER_PRODUCT_MATCHES_COLLECTION,
-            Some(&filter),
-            None,
-            500,
-        )?;
+        let rows = self
+            .list_all::<ProviderMatchRow>(
+                PROVIDER_PRODUCT_MATCHES_COLLECTION,
+                Some(&filter),
+                None,
+                500,
+            )
+            .map_err(to_request)?;
         Ok(rows
             .into_iter()
             .map(|r| MatchCandidate {
@@ -354,7 +373,8 @@ impl MatchStore for Store {
             .client
             .auth_token
             .as_deref()
-            .context("not authenticated to PocketBase")?
+            .context("not authenticated to PocketBase")
+            .map_err(to_request)?
             .to_owned();
         let pp_ids: Vec<String> = provider_products.iter().map(|p| p.id.clone()).collect();
         let mut items = Vec::new();
@@ -379,9 +399,10 @@ impl MatchStore for Store {
                 .map(|handle| {
                     handle
                         .join()
-                        .map_err(|_| anyhow::anyhow!("match loader panicked"))?
+                        .map_err(|_| to_request(anyhow::anyhow!("match loader panicked")))?
+                        .map_err(to_request)
                 })
-                .collect::<Vec<Result<Vec<ProviderMatchRow>>>>()
+                .collect::<Vec<Result<Vec<ProviderMatchRow>, PriceStoreError>>>()
         });
         for result in results {
             items.extend(result?);
@@ -412,14 +433,16 @@ impl MatchStore for Store {
             .client
             .auth_token
             .as_deref()
-            .context("not authenticated to PocketBase")?;
+            .context("not authenticated to PocketBase")
+            .map_err(to_request)?;
         let body = serde_json::to_string(&ProviderMatchPayload {
             provider_product_id: provider_product_id.to_string(),
             product_id: product_id.to_string(),
             score,
             status: "pending".to_string(),
         })
-        .context("could not serialize match")?;
+        .context("could not serialize match")
+        .map_err(to_request)?;
         let response = self
             .agent
             .post(&url)
@@ -429,11 +452,10 @@ impl MatchStore for Store {
         match response {
             Ok(response) => {
                 if !(200..300).contains(&response.status()) {
-                    return Err(anyhow::anyhow!(
+                    return Err(PriceStoreError::Request(format!(
                         "could not write match: HTTP {} (pair {provider_product_id} x {product_id})",
                         response.status()
-                    )
-                    .into());
+                    )));
                 }
                 Ok(MatchInsert::Created)
             }
@@ -442,12 +464,13 @@ impl MatchStore for Store {
                 if status == 400 && detail.contains("validation_not_unique") {
                     return Ok(MatchInsert::AlreadyExists);
                 }
-                Err(anyhow::anyhow!(
+                Err(PriceStoreError::Request(format!(
                     "could not write match: HTTP {status} body: {detail} (pair {provider_product_id} x {product_id})",
-                )
-                .into())
+                )))
             }
-            Err(e) => Err(anyhow::anyhow!("could not write match: {e}").into()),
+            Err(e) => Err(PriceStoreError::Request(format!(
+                "could not write match: {e}"
+            ))),
         }
     }
 
@@ -459,7 +482,8 @@ impl MatchStore for Store {
                 .records(PROVIDER_PRODUCTS_COLLECTION)
                 .update(&pp.id, ProductLinkPayload { product_id: None })
                 .call()
-                .map_err(|e| anyhow::anyhow!("could not clear product link: {e}"))?;
+                .map_err(|e| anyhow::anyhow!("could not clear product link: {e}"))
+                .map_err(to_request)?;
         }
         Ok(())
     }
@@ -476,20 +500,23 @@ impl MatchStore for Store {
                 },
             )
             .call()
-            .map_err(|e| anyhow::anyhow!("could not link product: {e}"))?;
-        self.mark_confirmed(winner)?;
+            .map_err(|e| anyhow::anyhow!("could not link product: {e}"))
+            .map_err(to_request)?;
+        self.mark_confirmed(winner).map_err(to_request)?;
         Ok(())
     }
 }
 
 impl PriceHistory for Store {
     fn latest_price_per_provider_product(&self) -> Result<HashMap<String, f64>, PriceStoreError> {
-        let rows = self.list_all::<ProviderPriceRow>(
-            PROVIDER_PRODUCT_PRICES_COLLECTION,
-            None,
-            Some("-created"),
-            500,
-        )?;
+        let rows = self
+            .list_all::<ProviderPriceRow>(
+                PROVIDER_PRODUCT_PRICES_COLLECTION,
+                None,
+                Some("-created"),
+                500,
+            )
+            .map_err(to_request)?;
         let mut prices = HashMap::new();
         for row in rows {
             prices.entry(row.provider_product_id).or_insert(row.price);

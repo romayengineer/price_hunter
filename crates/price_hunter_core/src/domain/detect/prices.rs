@@ -8,6 +8,7 @@ use scraper::node::{Element, Node};
 
 use super::Price;
 use super::extract::{find_structured_name, largest_text_block};
+use price_hunter_domain::text as domain_text;
 
 pub(super) fn find_price_divs(html: &Html) -> Vec<(NodeId, Vec<Price>)> {
     let own = own_texts(html);
@@ -210,139 +211,31 @@ fn is_div(el: &Element) -> bool {
 }
 
 pub(super) fn classify_div(text: &str) -> Option<Vec<Price>> {
-    let tokens = number_tokens(text);
-    let confident: Vec<Price> = tokens
-        .iter()
-        .filter(|t| has_separator(t))
-        .filter_map(|t| {
-            parse_price(t).map(|value| Price {
-                value,
-                text: t.clone(),
+    domain_text::classify_text(text).map(|prices| {
+        prices
+            .into_iter()
+            .map(|p| Price {
+                value: p.value,
+                text: p.text,
             })
-        })
-        .collect();
-    if !confident.is_empty() {
-        return Some(confident);
-    }
-    let bare: Vec<&str> = tokens
-        .iter()
-        .filter(|t| !has_separator(t) && (2..=7).contains(&t.len()))
-        .map(|s| s.as_str())
-        .collect();
-    if bare.len() == 1 && !text_has_content_other_than(text, bare[0]) {
-        let t = bare[0];
-        return Some(vec![Price {
-            value: t.parse().ok()?,
-            text: t.to_string(),
-        }]);
-    }
-    None
-}
-
-fn text_has_content_other_than(text: &str, token: &str) -> bool {
-    text.replacen(token, "", 1)
-        .chars()
-        .any(|c| c.is_alphanumeric() || matches!(c, '-' | '%'))
+            .collect()
+    })
 }
 
 pub(super) fn contains_confident_price(text: &str) -> bool {
-    number_tokens(text).iter().any(|t| has_separator(t))
+    domain_text::contains_confident_price(text)
 }
 
-fn has_separator(token: &str) -> bool {
-    token
-        .chars()
-        .any(|c| matches!(c, ' ' | '\u{a0}' | '.' | ',' | '\''))
-}
-
+/// Test/compat shims: the canonical implementations live in
+/// `price_hunter_domain::text`; kept here so `super::prices::…` paths keep
+/// working.
+#[allow(dead_code)]
 pub(super) fn number_tokens(text: &str) -> Vec<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < chars.len() {
-        if !chars[i].is_ascii_digit() {
-            i += 1;
-            continue;
-        }
-        let mut j = i + 1;
-        while j < chars.len() {
-            let c = chars[j];
-            if c.is_ascii_digit() {
-                j += 1;
-            } else if matches!(c, '.' | ',' | '\'')
-                && j + 1 < chars.len()
-                && chars[j + 1].is_ascii_digit()
-            {
-                j += 2;
-            } else if matches!(c, ' ' | '\u{a0}') && is_thousands_group(&chars, j) {
-                j += 1;
-            } else {
-                break;
-            }
-        }
-        out.push(chars[i..j].iter().collect());
-        i = j;
-    }
-    out
+    domain_text::number_tokens(text)
 }
 
-fn is_thousands_group(chars: &[char], j: usize) -> bool {
-    let mut k = j + 1;
-    while k < chars.len() && chars[k].is_ascii_digit() {
-        k += 1;
-    }
-    k - (j + 1) == 3
-}
-
+/// Test/compat shim over [`domain_text::parse_price`][price_hunter_domain::text::parse_price].
+#[allow(dead_code)]
 pub(super) fn parse_price(token: &str) -> Option<f64> {
-    let (int_part, frac) = split_decimal(token);
-    let int_digits: String = int_part.chars().filter(|c| c.is_ascii_digit()).collect();
-    if int_digits.is_empty() {
-        return None;
-    }
-    let mut num = int_digits;
-    if let Some(frac) = frac {
-        num.push('.');
-        num.push_str(&frac);
-    }
-    num.parse().ok()
-}
-
-fn split_decimal(token: &str) -> (String, Option<String>) {
-    let dot = token.rfind('.');
-    let comma = token.rfind(',');
-    let sep = match (dot, comma) {
-        (Some(d), Some(c)) if d > c => Some(d),
-        (Some(_), Some(c)) => Some(c),
-        (Some(d), None) => {
-            if digits_after(token, d) <= 2 {
-                Some(d)
-            } else {
-                None
-            }
-        }
-        (None, Some(c)) => {
-            if digits_after(token, c) <= 2 {
-                Some(c)
-            } else {
-                None
-            }
-        }
-        (None, None) => None,
-    };
-    match sep {
-        Some(i) => {
-            let int_part = &token[..i];
-            let frac: String = token[i + 1..]
-                .chars()
-                .filter(|c| c.is_ascii_digit())
-                .collect();
-            (int_part.to_string(), Some(frac))
-        }
-        None => (token.to_string(), None),
-    }
-}
-
-fn digits_after(s: &str, from: usize) -> usize {
-    s[from + 1..].chars().filter(|c| c.is_ascii_digit()).count()
+    domain_text::parse_price(token)
 }

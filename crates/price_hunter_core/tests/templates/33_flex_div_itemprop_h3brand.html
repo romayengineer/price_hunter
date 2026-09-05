@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body>
+        <main id="wrapper">
+            <header class="header">
+                Shop header
+            </header>
+            <div class="gallery-layout-container">
+                {% for product in products %}
+                    <article class="product-miniature {{ product.card_class }}">
+                        <div class="product-description">
+                            <h3 class="vtex-product-summary-2-x-nameContainer">
+                                <span class="vtex-product-summary-2-x-productBrand vtex-product-summary-2-x-brandName">{{ product.name }}</span>
+                            </h3>
+                            <a href="{{ product.href }}">{{ product.name }}</a>
+                            <div class="price">
+                                <bdi><span class="woocommerce-Price-currencySymbol">$</span>{{ product.price_text }}</bdi>
+                            </div>
+                        </div>
+                    </article>
+                {% endfor %}
+            </div>
+            <footer class="footer">
+                Contact us
+            </footer>
+        </main>
+    </body>
+</html>

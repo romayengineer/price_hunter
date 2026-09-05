@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body>
+        <main id="wrapper">
+            <header class="header">
+                Shop header
+            </header>
+            <section class="promo-banner">
+                <span class="banner-price">$ 99.999</span> limited offer
+            </section>
+            <div class="search-result-gallery">{% for product in products %}<div class="{{ product.card_class }}"><a href="{{ product.href }}" title="{{ product.name }}">{{ product.name }}</a>
+                <div class="price-container">
+                    <div class="inner-price"><span class="price">$ {{ product.price_text }}</span></div>
+                </div>
+                </div>
+            {% endfor %}
+        </div>
+        <footer class="footer">
+            Contact us
+        </footer>
+    </main>
+</body>
+</html>

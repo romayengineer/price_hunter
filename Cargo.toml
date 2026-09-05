@@ -1,36 +1,6 @@
-[package]
-name = "price_hunter"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["crates/*"]
+resolver = "2"
 
-[[bin]]
-name = "pricehunter"
-path = "src/main.rs"
-
-[dependencies]
-price_hunter_core = { path = "../price_hunter_core" }
-anyhow = "1"
-async-trait = "0.1"
-axum = "0.8"
-chrono = { version = "0.4", features = ["clock"] }
-csv = "1"
-dirs = "6"
-env_logger = "0.11"
-log = "0.4"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-pocketbase-sdk = { git = "https://github.com/sreedevk/pocketbase-sdk-rust", tag = "0.4.0" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-termios = "0.3"
-thiserror = "2"
-thirtyfour = "0.37"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
-toml = "0.8"
-ureq = "2"
-url = "2"
-
-[dev-dependencies]
-
-[lints]
-workspace = true
+[workspace.lints.clippy]
+cognitive_complexity = "deny"

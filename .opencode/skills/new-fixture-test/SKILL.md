@@ -9,13 +9,13 @@ Turn a saved HTML fixture into a green integration test, fixing `detect.rs` when
 
 ## Conventions
 
-- Fixtures: `tests/fixtures/<name>.html` (saved grid fragment; scraper auto-wraps html/body).
-- Tests: `tests/sites/<name>.rs`, one file per site, registered with
-  `pub mod <name>;` in `tests/sites/mod.rs`. Shape:
+- Fixtures: `crates/price_hunter_core/tests/fixtures/<name>.html` (saved grid fragment; scraper auto-wraps html/body).
+- Tests: `crates/price_hunter_core/tests/sites/<name>.rs`, one file per site, registered with
+  `pub mod <name>;` in `crates/price_hunter_core/tests/sites/mod.rs`. Shape:
 
 ```rust
 use crate::common;
-use price_hunter::detect::Product;
+use price_hunter_core::detect::Product;
 
 fn products() -> Vec<Product> {
     vec![
@@ -32,7 +32,7 @@ fn extracts_all_products_from_<name>_fixture() {
 
 - Expectations use `price_text: String::new()` — `common::products_found` compares only `name` + `price`.
 - `common::assert_fixture` checks every expected product exists (name+price) and the container has the given class (membership).
-- Fixture tests need no browser/network. Run `cargo test`; skip `--ignored` live tests.
+- Fixture tests need no browser/network. Run `cargo test --workspace` from the monorepo root; skip `--ignored` live tests.
 
 ## Detection pipeline (src/detect.rs)
 
@@ -50,19 +50,19 @@ fn extracts_all_products_from_<name>_fixture() {
 1. **Read the fixture** and map: the grid container element (note its `class`), the repeating card element, the name element, and the price element(s). Distinguish the CURRENT selling price from regular/old/discount (e.g. `itemprop="price"`, `.price`, `.sellingPrice` vs `.regular-price`, `.discount-*`, `del`/`s`).
 2. **Count cards**: `rg -c` a marker appearing once per card (e.g. `<article class="product-miniature`). That's the number of products expected.
 3. **Extract expected products** with a one-off script (template below) reading name + current price. Convert prices per the parse rules.
-4. **Probe the pipeline** — dump actual detection output and compare with the fixture. There are permanent, env-var-parameterized diagnostic tests (no temp files to create/delete), all under `tests/diagnostics/`:
-   - `PRICE_HUNTER_PROBE_FIXTURE=tests/fixtures/<name>.html cargo test --test diagnostics probe -- --nocapture` — prints the full `Detection` (container + products).
-   - `PRICE_HUNTER_MEASURE_FIXTURE=tests/fixtures/<name>.html cargo test --test diagnostics measure -- --nocapture` — prints every candidate container ranked by density with `p`/`d`/`density` and marks which one `detect_grid` selects. Use this when the wrong container is picked.
+4. **Probe the pipeline** — dump actual detection output and compare with the fixture. There are permanent, env-var-parameterized diagnostic tests (no temp files to create/delete), all under `crates/price_hunter/tests/diagnostics/` (run with `-p price_hunter` from the monorepo root; the test cwd is the crate dir, so fixture paths use `../price_hunter_core/...`):
+   - `PRICE_HUNTER_PROBE_FIXTURE=../price_hunter_core/tests/fixtures/<name>.html cargo test -p price_hunter --test diagnostics probe -- --nocapture` — prints the full `Detection` (container + products).
+   - `PRICE_HUNTER_MEASURE_FIXTURE=../price_hunter_core/tests/fixtures/<name>.html cargo test -p price_hunter --test diagnostics measure -- --nocapture` — prints every candidate container ranked by density with `p`/`d`/`density` and marks which one `detect_grid` selects. Use this when the wrong container is picked.
    - All three are no-ops without their env var, so normal test runs stay clean.
 5. **Fix `detect.rs` only if needed** (see failure modes). Preserve existing behavior with fallbacks; run the whole suite.
 6. **Add a `detect.rs` unit test** reproducing the quirk with inline HTML (in `#[cfg(test)] mod tests`).
-7. **Write `tests/sites/<name>.rs`** (and add `pub mod <name>;` to `tests/sites/mod.rs`), then verify: `cargo test` and `cargo clippy --all-targets`.
+7. **Write `crates/price_hunter_core/tests/sites/<name>.rs`** (and add `pub mod <name>;` to `crates/price_hunter_core/tests/sites/mod.rs`), then verify: `cargo test --workspace` and `cargo clippy --workspace --all-targets`.
 
 ## Diagnosing the live site
 
 When the fixture passes but the real site detects wrong (e.g. only 2 products, wrong container, prices `0.3`/`1.5`), the page differs from the fixture — usually there are widgets/carousels above the grid and a huge `page-wrapper`. Use:
 
-- `PRICE_HUNTER_LIVE_URL=<url> PRICE_HUNTER_DUMP_HTML=1 cargo test --test diagnostics live_probe -- --ignored -- --nocapture` — opens Chrome (persistent profile), navigates, scrolls, dumps the rendered HTML to `captures/diagnostic/live-probe.html`, and prints the detected container + products. Then run `probe`/`measure` against the dumped file.
+- `PRICE_HUNTER_LIVE_URL=<url> PRICE_HUNTER_DUMP_HTML=1 cargo test -p price_hunter --test diagnostics live_probe -- --ignored -- --nocapture` — opens Chrome (persistent profile), navigates, scrolls, dumps the rendered HTML to `captures/diagnostic/live-probe.html`, and prints the detected container + products. Then run `probe`/`measure` against the dumped file.
 - Compare the live markup with the fixture: the grid should be `div.products.wrapper` etc. If `best_container` picks the whole-page wrapper, the density scoring is off (see failure modes).
 
 ## Failure modes → where to fix detect.rs
@@ -87,7 +87,7 @@ PrestaShop (`itemprop="price"`):
 
 ```python
 import re, html as h
-src = open('tests/fixtures/<name>.html').read()
+src = open('crates/price_hunter_core/tests/fixtures/<name>.html').read()
 for b in re.split(r'<article ', src)[1:]:   # split on one-per-card marker
     name = re.search(r'<h2[^>]*>\s*<a[^>]*>([\s\S]*?)</a>', b)
     price = re.search(r'itemprop="price"[\s\S]*?<span>\$?([\d.,]+)</span>', b)
@@ -98,7 +98,7 @@ Magento / Hyva (`data-price-type="finalPrice"`):
 
 ```python
 import re, html as h
-src = open('tests/fixtures/<name>.html').read()
+src = open('crates/price_hunter_core/tests/fixtures/<name>.html').read()
 for b in re.split(r'<li class="flex flex-col">', src)[1:]:   # split on one-per-card marker
     name = re.search(r'data-role="product-item-name"[^>]*>\s*([\s\S]*?)</a>', b)
     price = re.search(r'data-price-type="finalPrice"[\s\S]*?<span\s+class="price">\$[^\d]*([\d.,]+)</span>', b)
@@ -109,10 +109,10 @@ for b in re.split(r'<li class="flex flex-col">', src)[1:]:   # split on one-per-
 
 - Expected `price_text` is always `String::new()`.
 - Pass ONE container class that's present on the container element.
-- Keep the diagnostic tests, don't delete them (they live under `tests/diagnostics/`):
-  - `tests/diagnostics/probe.rs` — fixture dumper (`PRICE_HUNTER_PROBE_FIXTURE=...`).
-  - `tests/diagnostics/measure.rs` — container ranking (`PRICE_HUNTER_MEASURE_FIXTURE=...`).
-  - `tests/diagnostics/live_probe.rs` — live browser probe (`PRICE_HUNTER_LIVE_URL=...`, `PRICE_HUNTER_DUMP_HTML=1`; runs with `-- --ignored`).
+- Keep the diagnostic tests, don't delete them (they live under `crates/price_hunter/tests/diagnostics/`):
+  - `crates/price_hunter/tests/diagnostics/probe.rs` — fixture dumper (`PRICE_HUNTER_PROBE_FIXTURE=...`).
+  - `crates/price_hunter/tests/diagnostics/measure.rs` — container ranking (`PRICE_HUNTER_MEASURE_FIXTURE=...`).
+  - `crates/price_hunter/tests/diagnostics/live_probe.rs` — live browser probe (`PRICE_HUNTER_LIVE_URL=...`, `PRICE_HUNTER_DUMP_HTML=1`; runs with `-- --ignored`).
 - PrestaShop: current price = `span[itemprop="price"]`; `.regular-price` and `.discount-*` must be ignored.
 - Magento/Hyva: current price = `[data-price-type="finalPrice"]`; ignore `oldPrice`/`basePrice` and `.product-installments` amounts.
 - Card count from `rg -c` must match the extracted product count.

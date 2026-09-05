@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body>
+        <main id="wrapper">
+            <header class="header">
+                Shop header
+            </header>
+            <section class="promo-banner">
+                <span class="banner-price">$ 99.999</span> limited offer
+            </section>
+            <div class="vtex-search-result-3-x-gallery vtex-search-result-3-x-gallery--grid flex flex-row flex-wrap">
+                {% for product in products %}
+                    <div class="{{ product.card_class }}">
+                        <h3 class="vtex-product-summary-2-x-nameContainer">
+                            <span class="vtex-product-summary-2-x-productBrand vtex-product-summary-2-x-brandName">{{ product.name }}</span>
+                        </h3>
+                        <a href="{{ product.href }}">{{ product.name }}</a>
+                        <div class="price-container">
+                            <div class="inner-price"><span class="price">$ {{ product.price_text }}</span></div>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+            <footer class="footer">
+                Contact us
+            </footer>
+        </main>
+    </body>
+</html>

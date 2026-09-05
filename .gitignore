@@ -7,6 +7,7 @@ matrix.csv
 brands.csv
 
 captures
+crates/*/captures
 
 .#*
 
@@ -17,6 +18,7 @@ captures
 /target
 
 profiles
+crates/*/profiles
 
 # PocketBase runtime data lives OUTSIDE the repo (~/.local/share/price_hunter)
 # so a fresh clone / project deletion never loses the database.

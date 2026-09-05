@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body>
+        <main id="wrapper">
+            <header class="header">
+                Shop header
+            </header>
+            <div class="outer-wrapper">
+                <div class="product-grid">
+                    {% for product in products %}
+                        <section class="{{ product.card_class }}">
+                            <div class="vtex-product-summary-2-x-productBrandContainer"><span class="vtex-product-summary-2-x-productBrandName">{{ product.brand }}</span></div>
+                            <a href="{{ product.href }}">{{ product.name_rest }}</a>
+                            <div class="price">
+                                <span class="price-wrapper" data-price-type="finalPrice"><span class="price">$&nbsp;{{ product.price_text }}</span></span><span class="price-wrapper" data-price-type="basePrice"><span class="price">$&nbsp;{{ product.price_text }}</span></span>
+                            </div>
+                        </section>
+                    {% endfor %}
+                </div>
+            </div>
+            <footer class="footer">
+                Contact us
+            </footer>
+        </main>
+    </body>
+</html>

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body>
+        <main id="wrapper">
+            <header class="header">
+                Shop header
+            </header>
+            <section class="promo-banner">
+                <span class="banner-price">$ 99.999</span> limited offer
+            </section>
+            <div class="vtex-flex-layout-0-x-flexRow--contenedor-precios">
+                {% for product in products %}
+                    <article class="product-miniature {{ product.card_class }}">
+                        <div class="product-description">
+                            <a href="{{ product.href }}">
+                                <img src="{{ product.img }}" alt="{{ product.name }}"></a><a href="{{ product.href }}">{{ product.name }}</a>
+                            <div class="price">
+                                <bdi><span class="woocommerce-Price-currencySymbol">$</span>{{ product.price_text }}</bdi>
+                            </div>
+                        </div>
+                    </article>
+                {% endfor %}
+            </div>
+            <footer class="footer">
+                Contact us
+            </footer>
+        </main>
+    </body>
+</html>

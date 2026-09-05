@@ -1,8 +1,9 @@
 #![allow(clippy::cognitive_complexity)]
 
 use super::detect_grid;
-use super::extract::{find_size_in_text, has_size, has_trailing_bare_number};
-use super::prices::{classify_div, number_tokens, parse_price};
+use price_hunter_domain::text::{find_size_in_text, has_size, has_trailing_bare_number};
+use super::prices::classify_div;
+use price_hunter_domain::text::{number_tokens, parse_price};
 
 fn grid_page() -> String {
     r#"

@@ -10,7 +10,8 @@ use price_hunter_domain::time::{iso8601, now_secs};
 
 use super::Store;
 use super::error::Error;
-use super::http::{escape_filter, host_of};
+use price_hunter_domain::net::host_of;
+use price_hunter_domain::text::escape_filter;
 use super::types::{
     PROVIDER_PRODUCT_IMAGES_COLLECTION, PROVIDER_PRODUCT_PRICES_COLLECTION,
     PROVIDER_PRODUCTS_COLLECTION, PROVIDERS_COLLECTION, ProductImagePayload, ProductImageRow,

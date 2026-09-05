@@ -221,21 +221,3 @@ pub(super) fn classify_div(text: &str) -> Option<Vec<Price>> {
             .collect()
     })
 }
-
-pub(super) fn contains_confident_price(text: &str) -> bool {
-    domain_text::contains_confident_price(text)
-}
-
-/// Test/compat shims: the canonical implementations live in
-/// `price_hunter_domain::text`; kept here so `super::prices::…` paths keep
-/// working.
-#[allow(dead_code)]
-pub(super) fn number_tokens(text: &str) -> Vec<String> {
-    domain_text::number_tokens(text)
-}
-
-/// Test/compat shim over [`domain_text::parse_price`][price_hunter_domain::text::parse_price].
-#[allow(dead_code)]
-pub(super) fn parse_price(token: &str) -> Option<f64> {
-    domain_text::parse_price(token)
-}

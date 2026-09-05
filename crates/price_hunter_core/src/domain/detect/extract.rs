@@ -6,10 +6,10 @@ use ego_tree::{NodeId, NodeRef};
 use scraper::Html;
 use scraper::node::Node;
 
-use super::prices::{classify_div, contains_confident_price};
+use super::prices::classify_div;
 use price_hunter_domain::matching::{BRAND_MIN_SCORE, best_match, brand_coverage};
 use price_hunter_domain::model::{Price, Product};
-use price_hunter_domain::text::collapse_whitespace;
+use price_hunter_domain::text::{self as domain_text, collapse_whitespace};
 
 pub(super) fn extract_products(
     html: &Html,
@@ -175,12 +175,7 @@ fn guess_name(html: &Html, id: NodeId, container_id: NodeId) -> String {
     }
 }
 
-/// Re-exported pure string helpers (single source of truth lives in
-/// `price_hunter_domain::text`; kept here so `super::extract::…` paths and
-/// unit tests keep working).
-pub(super) use price_hunter_domain::text::{
-    find_size_in_text, has_size, has_trailing_bare_number, size_from_url,
-};
+use price_hunter_domain::text::{find_size_in_text, size_from_url};
 
 /// Lifts the product size out of a VTEX-style SKU selector inside the card.
 /// Prefers the option marked `--selected`, falling back to the first one that
@@ -264,7 +259,7 @@ fn size_from_generic_card(html: &Html, card_id: NodeId) -> Option<String> {
         if text.chars().count() > 16 {
             continue;
         }
-        if contains_confident_price(&text) {
+        if domain_text::contains_confident_price(&text) {
             continue;
         }
         if let Some(size) = find_size_in_text(&text) {
@@ -285,7 +280,7 @@ pub(super) fn enrich_name_with_size(
     name: String,
     url: &str,
 ) -> String {
-    if has_size(&name) {
+    if domain_text::has_size(&name) {
         return name;
     }
     if let Some(size) = size_from_sku_selector(html, card_id) {
@@ -297,7 +292,7 @@ pub(super) fn enrich_name_with_size(
     if let Some(size) = size_from_url(url) {
         return format!("{name} {size}");
     }
-    if has_trailing_bare_number(&name) {
+    if domain_text::has_trailing_bare_number(&name) {
         return format!("{name} ml");
     }
     name
@@ -343,7 +338,7 @@ fn brand_of(html: &Html, card_id: NodeId) -> Option<String> {
         let text = collapse_whitespace(&text);
         if text.is_empty()
             || !text.chars().any(char::is_alphanumeric)
-            || contains_confident_price(&text)
+            || domain_text::contains_confident_price(&text)
             || text.chars().count() > 32
         {
             continue;
@@ -462,7 +457,7 @@ fn trusted_brand_of(html: &Html, card_id: NodeId, trusted: &HashSet<String>) -> 
 fn is_valid_brand_text(text: &str) -> bool {
     !text.is_empty()
         && text.chars().any(char::is_alphanumeric)
-        && !contains_confident_price(text)
+        && !domain_text::contains_confident_price(text)
         && text.chars().count() <= 32
 }
 
@@ -570,7 +565,7 @@ pub(super) fn find_structured_name(node: &NodeRef<'_, Node>) -> Option<String> {
                 })
                 .collect();
             let name = collapse_whitespace(&name);
-            if name.is_empty() || contains_confident_price(&name) {
+            if name.is_empty() || domain_text::contains_confident_price(&name) {
                 continue;
             }
             // append description if present nearby in the same card
@@ -588,7 +583,7 @@ pub(super) fn find_structured_name(node: &NodeRef<'_, Node>) -> Option<String> {
                         })
                         .collect();
                     let d = collapse_whitespace(&d);
-                    if !d.is_empty() && !contains_confident_price(&d) {
+                    if !d.is_empty() && !domain_text::contains_confident_price(&d) {
                         desc_text = d;
                         break;
                     }
@@ -628,7 +623,7 @@ pub(super) fn find_structured_name(node: &NodeRef<'_, Node>) -> Option<String> {
             })
             .collect();
         let text = collapse_whitespace(&text);
-        if !text.is_empty() && !contains_confident_price(&text) {
+        if !text.is_empty() && !domain_text::contains_confident_price(&text) {
             return Some(text);
         }
     }
@@ -651,7 +646,7 @@ pub(super) fn find_structured_name(node: &NodeRef<'_, Node>) -> Option<String> {
                     })
                     .collect();
                 let text = collapse_whitespace(&text);
-                if !text.is_empty() && !contains_confident_price(&text) {
+                if !text.is_empty() && !domain_text::contains_confident_price(&text) {
                     return Some(text);
                 }
             }
@@ -683,7 +678,7 @@ fn product_link(html: &Html, card_id: NodeId) -> Option<String> {
         let Some(href) = el.attr("href").map(str::trim) else {
             continue;
         };
-        if href.is_empty() || is_placeholder_href(href) {
+        if href.is_empty() || domain_text::is_placeholder_href(href) {
             continue;
         }
         let is_structured = el.attr("data-role") == Some("product-item-name")
@@ -701,11 +696,7 @@ fn product_link(html: &Html, card_id: NodeId) -> Option<String> {
     titled.or(fallback)
 }
 
-/// True for links that don't point anywhere useful for a product page.
-/// Delegates to the pure domain helper.
-fn is_placeholder_href(href: &str) -> bool {
-    price_hunter_domain::text::is_placeholder_href(href)
-}
+
 
 /// Whether the anchor carries any text of its own (a product-title link) as
 /// opposed to being an icon-only link (image + no text).
@@ -784,7 +775,7 @@ pub(super) fn largest_text_block(node: &NodeRef<'_, Node>) -> Option<String> {
         if let Node::Text(t) = n.value() {
             let s = collapse_whitespace(&t.text);
             if !s.is_empty()
-                && !contains_confident_price(&s)
+                && !domain_text::contains_confident_price(&s)
                 && s.chars().any(|c| c.is_alphabetic())
                 && s.chars().count() > best_block.chars().count()
             {

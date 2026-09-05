@@ -8,6 +8,8 @@
 #![deny(missing_docs)]
 
 pub mod error;
+pub mod capture;
+pub mod cli;
 pub mod matching;
 pub mod model;
 pub mod net;

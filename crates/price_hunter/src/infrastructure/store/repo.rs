@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 use super::Store;
-use super::http::escape_filter;
+use price_hunter_domain::text::escape_filter;
 use super::types::{
     BRANDS_COLLECTION, BrandLinkPayload, MatchListResponse, PRODUCTS_COLLECTION,
     PROVIDER_PRODUCT_IMAGES_COLLECTION, PROVIDER_PRODUCT_MATCHES_COLLECTION,

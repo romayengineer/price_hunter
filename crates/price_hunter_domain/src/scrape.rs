@@ -99,6 +99,15 @@ pub fn should_window_reload(count: usize, threshold: usize, has_page_param: bool
     has_page_param && threshold != 0 && count >= threshold
 }
 
+/// A short display name for a strategy kind, for user-facing output.
+pub fn strategy_kind_name(kind: StrategyKind) -> &'static str {
+    match kind {
+        StrategyKind::ScrollClick => "scroll-and-click",
+        StrategyKind::InfiniteScroll => "infinite scroll",
+        StrategyKind::Page => "page parameter",
+    }
+}
+
 /// Common load-more selectors tried when no explicit selector is given.
 pub const HEURISTIC_SELECTORS: &[&str] = &[
     "[data-role='show-more']",

@@ -241,6 +241,14 @@ pub fn is_placeholder_href(href: &str) -> bool {
     href.ends_with('#')
 }
 
+/// Escapes a value for use inside a PocketBase filter string literal. Single
+/// quotes and backslashes must be backslash-escaped or the filter parses
+/// wrong (e.g. `name='A Drop d'Issey...'` → HTTP 400), which used to
+/// abort the whole save and silently drop the rest of a capture.
+pub fn escape_filter(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
 /// Lowercases `s` and replaces non-ASCII characters with their closest ASCII
 /// match: accented Latin letters lose their diacritics (`bambú` → `bambu`,
 /// `Benoît` → `benoit`), curly quotes and acute accents become `'`, and zero-
@@ -324,6 +332,14 @@ mod tests {
         assert!(is_placeholder_href("javascript:void(0)"));
         assert!(is_placeholder_href("https://site/category#"));
         assert!(!is_placeholder_href("/producto/axe-gold-150-ml"));
+    }
+
+    #[test]
+    fn escape_filter_handles_apostrophes_and_backslashes() {
+        assert_eq!(escape_filter("plain"), "plain");
+        assert_eq!(escape_filter("A Drop d'Issey"), "A Drop d\\'Issey");
+        assert_eq!(escape_filter(r"a\b"), r"a\\b");
+        assert_eq!(escape_filter(r"back\'slash"), r"back\\\'slash");
     }
 
     #[test]

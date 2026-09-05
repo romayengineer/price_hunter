@@ -3,7 +3,6 @@
 use pocketbase_sdk::client::{Auth, Client};
 
 mod error;
-pub(crate) mod http;
 mod import;
 
 pub(crate) mod repo;

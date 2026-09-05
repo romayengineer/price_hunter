@@ -60,6 +60,12 @@ pub fn propose_unmatched(store: &impl PriceStore) -> Result<Vec<ProposedProduct>
     Ok(proposals)
 }
 
+/// Whether a (trimmed) brand cell is the `name` header row or blank, and so
+/// should be skipped instead of imported as a brand.
+pub fn brand_row_is_header_or_empty(name: &str) -> bool {
+    name.is_empty() || name.eq_ignore_ascii_case("name")
+}
+
 /// Builds one proposal from a single provider product, or `None` when it is
 /// already linked, splits into an empty product name, already exists in
 /// `products`, or duplicates an earlier proposal.
@@ -106,4 +112,27 @@ fn propose_one(
         product_name: product_name.to_string(),
         name: full,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::brand_row_is_header_or_empty;
+
+    #[test]
+    fn name_header_is_skipped_case_insensitively() {
+        assert!(brand_row_is_header_or_empty("name"));
+        assert!(brand_row_is_header_or_empty("NAME"));
+        assert!(brand_row_is_header_or_empty("Name"));
+    }
+
+    #[test]
+    fn empty_cell_is_skipped() {
+        assert!(brand_row_is_header_or_empty(""));
+    }
+
+    #[test]
+    fn real_brand_is_not_skipped() {
+        assert!(!brand_row_is_header_or_empty("Natura"));
+        assert!(!brand_row_is_header_or_empty("name brand"));
+    }
 }

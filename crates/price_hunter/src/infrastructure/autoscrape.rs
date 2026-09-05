@@ -518,7 +518,7 @@ async fn detect_products(driver: &WebDriver, state: &mut ScrapeState<'_>) -> Res
             state.tracker.reset();
             return Ok(0);
         }
-        return Ok(count_of(&state.best));
+        return Ok(price_hunter_domain::capture::count_of(&state.best));
     };
     let count = detection.products.len();
     let container = &detection.container;
@@ -535,11 +535,11 @@ async fn detect_products(driver: &WebDriver, state: &mut ScrapeState<'_>) -> Res
         return Ok(count);
     }
     if state.best.as_ref().is_none_or(|b| count > b.products.len()) {
-        log::info!("new best: {count} products (was {})", count_of(&state.best));
+        log::info!("new best: {count} products (was {})", price_hunter_domain::capture::count_of(&state.best));
         state.best = Some(detection);
         (state.on_growth)(state.best.as_ref().expect("best was just set"));
     }
-    Ok(count_of(&state.best))
+    Ok(price_hunter_domain::capture::count_of(&state.best))
 }
 
 /// Polls the product count until it exceeds `before` (the count from before a
@@ -566,11 +566,6 @@ async fn wait_for_growth(
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
-}
-
-/// The number of products in the best detection so far (0 when none).
-fn count_of(best: &Option<Detection>) -> usize {
-    best.as_ref().map_or(0, |d| d.products.len())
 }
 
 /// Finds a visible load-more button, either matching `selector` or (when no

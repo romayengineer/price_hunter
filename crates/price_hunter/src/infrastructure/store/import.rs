@@ -2,10 +2,11 @@ use anyhow::{Context, Result};
 
 use price_hunter_domain::matching::full_name;
 use price_hunter_domain::model::BrandRow;
+use price_hunter_domain::text::escape_filter;
+use price_hunter_domain::usecases::imports::brand_row_is_header_or_empty;
 
 use super::Store;
 use super::error::Error;
-use super::http::escape_filter;
 use super::types::{
     BRANDS_COLLECTION, BrandPayload, PRODUCTS_COLLECTION, ProductImportPayload, ProductImportRow,
     RowOutcome,
@@ -144,34 +145,5 @@ impl Store {
             .call::<BrandRow>()
             .context("could not look up brand")?;
         Ok(existing.items.into_iter().next())
-    }
-}
-
-/// Whether a (trimmed) brand cell is the `name` header row or blank, and so
-/// should be skipped instead of imported as a brand.
-fn brand_row_is_header_or_empty(name: &str) -> bool {
-    name.is_empty() || name.eq_ignore_ascii_case("name")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::brand_row_is_header_or_empty;
-
-    #[test]
-    fn name_header_is_skipped_case_insensitively() {
-        assert!(brand_row_is_header_or_empty("name"));
-        assert!(brand_row_is_header_or_empty("NAME"));
-        assert!(brand_row_is_header_or_empty("Name"));
-    }
-
-    #[test]
-    fn empty_cell_is_skipped() {
-        assert!(brand_row_is_header_or_empty(""));
-    }
-
-    #[test]
-    fn real_brand_is_not_skipped() {
-        assert!(!brand_row_is_header_or_empty("Natura"));
-        assert!(!brand_row_is_header_or_empty("name brand"));
     }
 }

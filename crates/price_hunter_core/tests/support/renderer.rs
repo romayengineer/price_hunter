@@ -82,9 +82,8 @@ fn to_view(p: &Product, idx: usize) -> ProductView {
         "vtex-search-result-3-x-galleryItem--normal",
     ];
     let card_class = card_classes[idx % card_classes.len()].to_string();
-    let (brand, name_rest) = brand_split(&p.name)
-        .map(|(b, r)| (b, r))
-        .unwrap_or((String::new(), p.name.clone()));
+    let (brand, name_rest) =
+        brand_split(&p.name).unwrap_or((String::new(), p.name.clone()));
     ProductView {
         name: p.name.clone(),
         name_rest,

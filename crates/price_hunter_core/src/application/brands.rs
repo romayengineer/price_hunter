@@ -122,10 +122,10 @@ fn resolve_brand<'a>(
     {
         return product_brand.get(product_id).copied().flatten();
     }
-    if let Some(raw) = pp.brand_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        if let Some((id, _, _)) = best_match(raw, brand_candidates, brand_coverage, BRAND_MIN_SCORE) {
-            return Some(id);
-        }
+    if let Some(raw) = pp.brand_name.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        && let Some((id, _, _)) = best_match(raw, brand_candidates, brand_coverage, BRAND_MIN_SCORE)
+    {
+        return Some(id);
     }
     best_match(&pp.name, brand_candidates, brand_coverage, BRAND_MIN_SCORE).map(|(id, _, _)| id)
 }

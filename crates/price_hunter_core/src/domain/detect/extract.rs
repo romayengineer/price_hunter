@@ -489,15 +489,10 @@ fn learn_trusted_signatures(
         .enumerate()
         .map(|(i, b)| (format!("b{i}"), b.clone()))
         .collect();
-    let card_ids: Vec<NodeId> = cards
-        .iter()
-        .filter_map(|(key, _, _)| {
-            // we stored key = card_of result, need actual card ids to inspect;
-            // recompute from price divs would be ideal, but we have card key already.
-            // To avoid extra work, collect distinct keys.
-            Some(*key)
-        })
-        .collect();
+    // we stored key = card_of result, need actual card ids to inspect;
+    // recompute from price divs would be ideal, but we have card key already.
+    // To avoid extra work, collect distinct keys.
+    let card_ids: Vec<NodeId> = cards.iter().map(|(key, _, _)| *key).collect();
     // dedup
     let mut uniq: Vec<NodeId> = Vec::new();
     for id in card_ids {

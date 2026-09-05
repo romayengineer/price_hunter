@@ -15,7 +15,7 @@ Turn a saved HTML fixture into a green integration test, fixing `detect.rs` when
 
 ```rust
 use crate::common;
-use price_hunter_core::detect::Product;
+use price_hunter_domain::model::Product;
 
 fn products() -> Vec<Product> {
     vec![

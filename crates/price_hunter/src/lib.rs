@@ -1,23 +1,17 @@
 //! Price Hunter: detects product price grids in arbitrary e-commerce HTML and
 //! captures them.
 //!
-//! Layered layout: `domain` (pure types + logic), `application` (use cases),
-//! `infrastructure` (adapters: PocketBase, browser, HTTP server, files).
-//! The `pub use` aliases below keep the historic public module paths (`detect`,
-//! `store`, ...) stable for the binary and integration tests.
+//! Layered layout: `price_hunter_domain` (pure types + use cases),
+//! `price_hunter_core` (HTML detection traversal), `infrastructure` (adapters:
+//! PocketBase, browser, HTTP server, files).
 
 #![deny(missing_docs)]
 
 pub mod infrastructure;
 
-// Re-export core so `crate::domain`/`crate::application` keep working in
-// infrastructure and `price_hunter::detect` stays stable for tests.
-pub use price_hunter_core::application;
-pub use price_hunter_core::domain;
-
+// Stable paths for the binary and tests.
 pub use price_hunter_core::domain::detect;
-pub use price_hunter_core::domain::matching;
-pub use price_hunter_core::application::export;
+pub use price_hunter_domain::usecases::export;
 pub use crate::infrastructure::autoscrape;
 pub use crate::infrastructure::browser;
 pub use crate::infrastructure::capture;

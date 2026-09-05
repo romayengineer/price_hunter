@@ -3,12 +3,12 @@
 
 use std::collections::HashSet;
 
-use crate::domain::error::PriceStoreError;
-use crate::domain::matching::{
+use crate::error::PriceStoreError;
+use crate::matching::{
     BRAND_MIN_SCORE, best_match, brand_coverage, full_name, split_size, strip_brand,
 };
-use crate::domain::model::ProviderProductRow;
-use crate::domain::ports::PriceStore;
+use crate::model::ProviderProductRow;
+use crate::ports::PriceStore;
 
 /// A canonical product proposed from an unmatched provider product.
 #[derive(Debug, PartialEq, Eq, Clone)]

@@ -3,9 +3,9 @@
 
 #![allow(clippy::cognitive_complexity)]
 
-use price_hunter_core::application::brands::{match_brands, missing_brands, unbranded_products};
-use price_hunter_core::domain::model::{BrandRow, ProductRow, ProviderProductRow, ProviderRow};
-use price_hunter_core::domain::ports::ProviderCatalog;
+use price_hunter_domain::usecases::brands::{match_brands, missing_brands, unbranded_products};
+use price_hunter_domain::model::{BrandRow, ProductRow, ProviderProductRow, ProviderRow};
+use price_hunter_domain::ports::ProviderCatalog;
 
 use super::fakes::FakeStore;
 

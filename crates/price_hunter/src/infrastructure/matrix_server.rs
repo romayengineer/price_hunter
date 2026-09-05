@@ -7,8 +7,8 @@ use axum::routing::get;
 use axum::{Json, Router};
 use std::sync::Arc;
 
-use crate::application::matrix as matrix_service;
-use crate::domain::model::Matrix;
+use price_hunter_domain::usecases::matrix as matrix_service;
+use price_hunter_domain::model::Matrix;
 use crate::infrastructure::store::Store;
 
 /// Serves the product × provider price matrix over HTTP for local UIs.

@@ -5,7 +5,7 @@
 //! template (sorted alphabetically), so no manual `0 => "…"` line is needed.
 
 use askama::Template;
-use price_hunter_core::detect::Product;
+use price_hunter_domain::model::Product;
 
 // ---------------------------------------------------------------------------
 // helpers

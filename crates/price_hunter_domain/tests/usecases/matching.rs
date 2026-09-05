@@ -3,10 +3,10 @@
 
 #![allow(clippy::cognitive_complexity)]
 
-use price_hunter_core::application::matching::{link_matches, match_products};
-use price_hunter_core::application::reporter::NoopReporter;
-use price_hunter_core::domain::error::PriceStoreError;
-use price_hunter_core::domain::model::{ProductRow, ProviderProductRow, ProviderRow};
+use price_hunter_domain::usecases::matching::{link_matches, match_products};
+use price_hunter_domain::reporter::NoopReporter;
+use price_hunter_domain::error::PriceStoreError;
+use price_hunter_domain::model::{ProductRow, ProviderProductRow, ProviderRow};
 
 use super::fakes::FakeStore;
 

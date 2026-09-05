@@ -1547,7 +1547,7 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
 name = "price_hunter"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1559,6 +1559,7 @@ dependencies = [
  "log",
  "pocketbase-sdk",
  "price_hunter_core",
+ "price_hunter_domain",
  "serde",
  "serde_json",
  "termios",
@@ -1576,9 +1577,7 @@ dependencies = [
 name = "price_hunter_core"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "askama",
- "csv",
  "ego-tree",
  "price_hunter_domain",
  "proptest",

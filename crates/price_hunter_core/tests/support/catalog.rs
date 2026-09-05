@@ -2,7 +2,7 @@
 //! Names/prices are derived from real fixtures (pigmento / beauty24) to stay
 //! realistic and stable.
 
-use price_hunter_core::detect::Product;
+use price_hunter_domain::model::Product;
 
 pub fn fixed_products() -> Vec<Product> {
     vec![

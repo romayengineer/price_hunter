@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 
-use crate::domain::matching::full_name;
-use crate::domain::model::BrandRow;
+use price_hunter_domain::matching::full_name;
+use price_hunter_domain::model::BrandRow;
 
 use super::Store;
 use super::error::Error;

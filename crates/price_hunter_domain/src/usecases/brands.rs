@@ -2,10 +2,10 @@
 
 use std::collections::HashMap;
 
-use crate::domain::error::PriceStoreError;
-use crate::domain::matching::{BRAND_MIN_SCORE, best_match, brand_coverage};
-use crate::domain::model::ProviderProductRow;
-use crate::domain::ports::PriceStore;
+use crate::error::PriceStoreError;
+use crate::matching::{BRAND_MIN_SCORE, best_match, brand_coverage};
+use crate::model::ProviderProductRow;
+use crate::ports::PriceStore;
 
 /// Result of one `-match-brands` run.
 pub struct BrandMatchSummary {

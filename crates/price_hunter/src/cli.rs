@@ -8,15 +8,15 @@ use std::time::Duration;
 use anyhow::Context;
 use thirtyfour::prelude::*;
 
-use price_hunter::application::reporter::Reporter;
-use price_hunter::application::{brands, imports, matching, matrix};
+use price_hunter_domain::reporter::Reporter;
+use price_hunter_domain::usecases::{brands, imports, matching, matrix};
 use price_hunter::autoscrape::{self, AutoScrapeOptions, StrategyKind};
 use price_hunter::browser;
 use price_hunter::capture;
 use price_hunter::config;
 use price_hunter::detect::{self, Detection, Product};
-use price_hunter::domain::model::ProductInsert;
-use price_hunter::domain::ports::{BrandCatalog, ProductCatalog, ProviderCatalog};
+use price_hunter_domain::model::ProductInsert;
+use price_hunter_domain::ports::{BrandCatalog, ProductCatalog, ProviderCatalog};
 use price_hunter::export;
 use price_hunter::instance::InstanceGuard;
 use price_hunter::store::Store;
@@ -236,7 +236,7 @@ fn import_brands(path: &std::path::Path) -> anyhow::Result<()> {
 fn export_matrix(path: &PathBuf) -> anyhow::Result<()> {
     let store = connect()?;
     let matrix = matrix::matrix(&store)?;
-    let csv = export::matrix_to_csv(&matrix)?;
+    let csv = export::matrix_to_csv(&matrix);
     std::fs::write(path, csv).with_context(|| format!("could not write CSV to {path:?}"))?;
     println!(
         "Exported {} products × {} providers to {}",
@@ -252,7 +252,7 @@ fn export_matrix(path: &PathBuf) -> anyhow::Result<()> {
 fn export_products(path: &PathBuf) -> anyhow::Result<()> {
     let store = connect()?;
     let products = store.list_all_products()?;
-    let csv = export::products_to_csv(&products)?;
+    let csv = export::products_to_csv(&products);
     std::fs::write(path, csv).with_context(|| format!("could not write CSV to {path:?}"))?;
     println!("Exported {} products to {}", products.len(), path.display());
     Ok(())
@@ -263,7 +263,7 @@ fn export_products(path: &PathBuf) -> anyhow::Result<()> {
 fn export_brands(path: &PathBuf) -> anyhow::Result<()> {
     let store = connect()?;
     let brands = store.list_brands()?;
-    let csv = export::brands_to_csv(&brands)?;
+    let csv = export::brands_to_csv(&brands);
     std::fs::write(path, csv).with_context(|| format!("could not write CSV to {path:?}"))?;
     println!("Exported {} brands to {}", brands.len(), path.display());
     Ok(())
@@ -288,7 +288,7 @@ fn delete_products(path: Option<PathBuf>, yes: bool) -> anyhow::Result<()> {
 fn stale_products(
     store: &Store,
     path: Option<&PathBuf>,
-) -> anyhow::Result<Vec<price_hunter::domain::model::ProductRow>> {
+) -> anyhow::Result<Vec<price_hunter_domain::model::ProductRow>> {
     let all = store.list_all_products()?;
     if let Some(csv_path) = path {
         let keys = csv_product_keys(csv_path)?;
@@ -303,7 +303,7 @@ fn stale_products(
 
 fn delete_product_pages(
     store: &Store,
-    stale: &[price_hunter::domain::model::ProductRow],
+    stale: &[price_hunter_domain::model::ProductRow],
     yes: bool,
 ) -> anyhow::Result<()> {
     println!("{} canonical products to delete", stale.len());
@@ -326,7 +326,7 @@ fn delete_product_pages(
 }
 
 fn confirm_delete_page(
-    page: &[price_hunter::domain::model::ProductRow],
+    page: &[price_hunter_domain::model::ProductRow],
     page_index: usize,
     pages: usize,
     yes: bool,
@@ -607,7 +607,7 @@ async fn auto_scrape_with_driver(
         autoscrape::MAX_STEPS,
         Some(store),
         |detection| {
-            let new_products = price_hunter::detect::product_delta(&detection.products, &mut seen);
+            let new_products = price_hunter_domain::model::product_delta(&detection.products, &mut seen);
             if new_products.is_empty() {
                 return;
             }
@@ -619,7 +619,7 @@ async fn auto_scrape_with_driver(
     // Persist any products seen in the final detection that weren't saved by a
     // growth callback (e.g. strategy exhaustion before a growth).
     if let Some(detection) = &detection {
-        let new_products = price_hunter::detect::product_delta(&detection.products, &mut seen);
+        let new_products = price_hunter_domain::model::product_delta(&detection.products, &mut seen);
         if !new_products.is_empty() {
             persist_new_products(store, url, &new_products);
         }
@@ -676,7 +676,7 @@ fn persist_delta_or_log(
     path: &std::path::Path,
     new_products: &[Product],
 ) {
-    let now = price_hunter::domain::time::now_secs();
+    let now = price_hunter_domain::time::now_secs();
     match store.save_incremental(
         url,
         now,
@@ -792,7 +792,7 @@ async fn capture_if_needed(driver: &WebDriver, state: &mut LoopState) {
         Some(d) => d.clone(),
         None => return,
     };
-    let delta = price_hunter::detect::product_delta(&detection.products, &mut state.seen);
+    let delta = price_hunter_domain::model::product_delta(&detection.products, &mut state.seen);
     if delta.is_empty() {
         return;
     }

@@ -44,8 +44,8 @@ impl DriverPage for WebDriver {
     }
 }
 
-use crate::domain::detect::{self, Detection};
-use crate::domain::ports::{BrandCatalog, ProductCatalog};
+use crate::detect::{self, Detection};
+use price_hunter_domain::ports::{BrandCatalog, ProductCatalog};
 use crate::store::Store;
 
 static WINDOW_RELOADED: AtomicBool = AtomicBool::new(false);

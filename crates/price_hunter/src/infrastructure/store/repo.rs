@@ -13,13 +13,13 @@ use super::types::{
     ProductImportPayload, ProductImportRow, ProductLinkPayload, ProviderMatchPayload,
     ProviderPriceRow,
 };
-use crate::domain::error::PriceStoreError;
-use crate::domain::matching::{MIN_SCORE, MatchCandidate};
-use crate::domain::model::{
+use price_hunter_domain::error::PriceStoreError;
+use price_hunter_domain::matching::{MIN_SCORE, MatchCandidate};
+use price_hunter_domain::model::{
     BrandRow, MatchInsert, ProductInsert, ProductRow, ProviderMatchRow, ProviderProductRow,
     ProviderRow,
 };
-use crate::domain::ports::{
+use price_hunter_domain::ports::{
     BrandCatalog, MatchStore, PriceHistory, ProductCatalog, ProviderCatalog,
 };
 

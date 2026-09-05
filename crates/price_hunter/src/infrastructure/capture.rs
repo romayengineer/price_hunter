@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use crate::domain::detect::{Container, Detection, Product};
+use price_hunter_domain::model::{Container, Detection, Product};
 
 #[derive(Serialize)]
 struct Capture {

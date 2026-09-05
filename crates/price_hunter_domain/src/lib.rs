@@ -10,5 +10,7 @@ pub mod error;
 pub mod matching;
 pub mod model;
 pub mod ports;
+pub mod reporter;
 pub mod text;
 pub mod time;
+pub mod usecases;

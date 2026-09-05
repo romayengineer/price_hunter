@@ -3,13 +3,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::application::reporter::Reporter;
-use crate::domain::error::PriceStoreError;
-use crate::domain::matching::{
+use crate::reporter::Reporter;
+use crate::error::PriceStoreError;
+use crate::matching::{
     MIN_SCORE, MatchCandidate, assign_group, similarity, split_size,
 };
-use crate::domain::model::{MatchInsert, ProductRow, ProviderProductRow};
-use crate::domain::ports::PriceStore;
+use crate::model::{MatchInsert, ProductRow, ProviderProductRow};
+use crate::ports::PriceStore;
 
 /// Outcome of one `-match-products` run.
 #[derive(Debug)]

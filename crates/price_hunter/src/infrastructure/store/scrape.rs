@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 
-use crate::domain::detect::{Detection, Product};
-use crate::domain::matching::split_size;
-use crate::domain::model::{ProviderProductRow, ProviderRow};
-use crate::domain::time::{iso8601, now_secs};
+use price_hunter_domain::model::{Detection, Product};
+use price_hunter_domain::matching::split_size;
+use price_hunter_domain::model::{ProviderProductRow, ProviderRow};
+use price_hunter_domain::time::{iso8601, now_secs};
 
 use super::Store;
 use super::error::Error;

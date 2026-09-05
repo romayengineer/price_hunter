@@ -4,13 +4,13 @@ use std::collections::HashMap;
 
 use std::collections::HashSet;
 
-use crate::domain::error::PriceStoreError;
-use crate::domain::matching::full_name;
-use crate::domain::model::{
+use crate::error::PriceStoreError;
+use crate::matching::full_name;
+use crate::model::{
     Matrix, MatrixProvider, MatrixRow, ProductRow, ProviderProductRow, ProviderRow,
 };
-use crate::domain::ports::PriceStore;
-use crate::domain::time::{iso8601, now_secs};
+use crate::ports::PriceStore;
+use crate::time::{iso8601, now_secs};
 
 /// Builds the product × provider price matrix: one row per product with a
 /// price at two or more distinct providers, one column per provider, and

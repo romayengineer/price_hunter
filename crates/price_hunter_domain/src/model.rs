@@ -2,7 +2,7 @@
 //! These are plain data types (no I/O); they get (de)serialized by the
 //! PocketBase adapter and served over HTTP by the matrix server.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -146,4 +146,104 @@ pub struct Matrix {
     pub providers: Vec<MatrixProvider>,
     /// One row per product priced at two or more providers.
     pub rows: Vec<MatrixRow>,
+}
+
+/// A price found inside a product card.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Price {
+    /// The parsed numeric value.
+    pub value: f64,
+    /// The raw price text as it appeared in the markup.
+    pub text: String,
+}
+
+/// A detected product: name, current price and the card's link/images.
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+pub struct Product {
+    /// Display name, possibly enriched with the size and brand.
+    pub name: String,
+    /// The price text verbatim.
+    pub price_text: String,
+    /// The parsed price.
+    pub price: f64,
+    /// The product card's link, when one was found.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Deduplicated image URLs in the card.
+    #[serde(default)]
+    pub images: Vec<String>,
+    /// Best-effort currency code (`ARS`, `USD`, ...), when detectable.
+    #[serde(default)]
+    pub currency: Option<String>,
+    /// Best-effort brand name extracted from the product card or from the
+    /// name via catalog matching. `None` when no brand could be determined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brand: Option<String>,
+}
+
+impl Product {
+    /// Stable key that considers every field; two products with the same key
+    /// are identical for delta purposes. `price` uses `to_bits` to avoid `f64`
+    /// `Eq`/`Hash` issues and images are sorted so order is irrelevant.
+    pub fn delta_key(&self) -> String {
+        let mut imgs = self.images.clone();
+        imgs.sort_unstable();
+        format!(
+            "{}|{}|{:016x}|{}|{}|{}|{}",
+            self.name,
+            self.price_text,
+            self.price.to_bits(),
+            self.url.as_deref().unwrap_or(""),
+            imgs.join(","),
+            self.currency.as_deref().unwrap_or(""),
+            self.brand.as_deref().unwrap_or("")
+        )
+    }
+}
+
+/// Returns only the products not yet seen (inserting their `delta_key` into `seen`).
+/// `seen` is in-memory only and tracks full product identity, not just name.
+pub fn product_delta(products: &[Product], seen: &mut HashSet<String>) -> Vec<Product> {
+    products
+        .iter()
+        .filter(|p| seen.insert(p.delta_key()))
+        .cloned()
+        .collect()
+}
+
+/// The grid container that was selected for the detection.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Container {
+    /// The element's CSS classes.
+    pub classes: Vec<String>,
+    /// The element's `id` attribute, when present.
+    pub id: Option<String>,
+    /// Number of direct element children of the container.
+    pub child_count: usize,
+}
+
+/// The result of running detection over a page.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Detection {
+    /// The container that grouped the prices into a grid.
+    pub container: Container,
+    /// One product per detected card.
+    pub products: Vec<Product>,
+}
+
+/// One candidate product-grid container, as ranked by diagnostics.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ContainerCandidate {
+    /// The candidate element's CSS classes.
+    pub classes: Vec<String>,
+    /// The candidate element's `id` attribute, when present.
+    pub id: Option<String>,
+    /// How many price divs the candidate contains.
+    pub price_count: usize,
+    /// How many nested divs the candidate contains.
+    pub div_count: usize,
+    /// `price_count / div_count`.
+    pub density: f64,
+    /// Whether detection would pick this candidate.
+    pub selected: bool,
 }

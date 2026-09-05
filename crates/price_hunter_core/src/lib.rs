@@ -1,12 +1,9 @@
-//! Price Hunter core: pure domain types, detection pipeline, fuzzy matching,
-//! and application use cases. No browser, filesystem, or PocketBase I/O — all
-//! persistence goes through the [`domain::ports::PriceStore`] port.
+//! Price Hunter core: HTML grid detection over `price_hunter_domain` types.
+//! Use cases and pure logic live in `price_hunter_domain`; this crate keeps
+//! only the scraper-based traversal.
 
 #![deny(missing_docs)]
 
-pub mod application;
 pub mod domain;
 
 pub use domain::detect;
-pub use domain::matching;
-pub use application::export;

@@ -1,4 +1,4 @@
-use crate::domain::detect::{Container, Detection, Product};
+use price_hunter_domain::model::{Container, Detection, Product};
 
 #[test]
 fn sample_detection_builds_one_capture_and_two_products() {

@@ -1,6 +1,6 @@
 [package]
 name = "price_hunter"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 
 [[bin]]
@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 price_hunter_core = { path = "../price_hunter_core" }
+price_hunter_domain = { path = "../price_hunter_domain" }
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"

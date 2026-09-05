@@ -1,49 +1,42 @@
-//! Serializes the price matrix and the canonical products as CSV for
-//! spreadsheet consumption.
+//! Pure CSV tables for spreadsheet consumption (no `csv`/`anyhow`).
+//! Builds RFC-4180 CSV text manually so `price_hunter_domain` stays free of
+//! I/O crates. Callers that need `csv::Writer` byte-parity should use the
+//! thin adapter in `price_hunter_core`; the tables here are the source of
+//! truth for ordering, folding and escaping.
 
-use anyhow::Result;
+use crate::model::{BrandRow, Matrix, ProductRow};
+use crate::text::ascii_fold;
 
-use crate::domain::model::{BrandRow, Matrix, ProductRow};
-
-/// Lowercases `s` and replaces non-ASCII characters with their closest ASCII
-/// match: accented Latin letters lose their diacritics (`bambú` → `bambu`,
-/// `Benoît` → `benoit`), curly quotes and acute accents become `'`, and zero-
-/// width / BOM characters are dropped. Characters with no ASCII equivalent are
-/// left unchanged. Used both as the sort key and for the CSV output, so a
-/// lowercase, ASCII-only file round-trips deterministically and sorts by the
-/// base letters (`bambú` and `bambu` compare equal, then the rest of the name
-/// decides the order).
-fn ascii_fold(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        fold_char(c, &mut out);
+/// Escapes one CSV field per RFC-4180: fields containing `,`, `"`, `\n` or
+/// `\r` are wrapped in quotes with `"` doubled.
+fn escape_field(field: &str) -> String {
+    if field.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", field.replace('"', "\"\""))
+    } else {
+        field.to_string()
     }
-    out
 }
 
-/// Appends the lowercase ASCII fold of `c` (possibly several chars, e.g.
-/// `ß` → `ss`, or none for zero-width marks) to `out`.
-fn fold_char(c: char, out: &mut String) {
-    match c {
-        '\u{feff}' | '\u{200b}' | '\u{200c}' | '\u{200d}' => {}
-        c if c.is_ascii() => out.push(c.to_ascii_lowercase()),
-        c => match c.to_lowercase().to_string().as_str() {
-            "à" | "á" | "â" | "ã" | "ä" | "å" => out.push('a'),
-            "è" | "é" | "ê" | "ë" => out.push('e'),
-            "ì" | "í" | "î" | "ï" => out.push('i'),
-            "ò" | "ó" | "ô" | "õ" | "ö" | "ø" => out.push('o'),
-            "ù" | "ú" | "û" | "ü" => out.push('u'),
-            "ñ" => out.push('n'),
-            "ç" => out.push('c'),
-            "ß" => out.push_str("ss"),
-            "ÿ" => out.push('y'),
-            "æ" => out.push_str("ae"),
-            "œ" => out.push_str("oe"),
-            "\u{00b4}" | "\u{2018}" | "\u{2019}" | "\u{201a}" | "\u{201b}" | "\u{02b9}"
-            | "\u{02bc}" => out.push('\''),
-            _ => out.push(c),
-        },
+fn tables_to_csv(header: &[String], rows: &[Vec<String>]) -> String {
+    let mut out = String::from('\u{feff}');
+    out.push_str(
+        &header
+            .iter()
+            .map(|h| escape_field(h))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    out.push('\n');
+    for row in rows {
+        out.push_str(
+            &row.iter()
+                .map(|c| escape_field(c))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        out.push('\n');
     }
+    out
 }
 
 /// Serializes the matrix as CSV with the same table structure as
@@ -51,36 +44,32 @@ fn fold_char(c: char, out: &mut String) {
 /// product, raw numeric prices, and a blank cell when a provider doesn't
 /// carry the product. A UTF-8 BOM is prepended so Excel detects the
 /// encoding.
-pub fn matrix_to_csv(matrix: &Matrix) -> Result<String> {
-    let mut writer = csv::Writer::from_writer(Vec::new());
-    let mut header = vec!["Product".to_string()];
-    header.extend(matrix.providers.iter().map(|p| p.domain.clone()));
-    writer.write_record(&header)?;
-    for row in &matrix.rows {
-        let mut record = vec![row.name.clone()];
-        record.extend(matrix.providers.iter().map(|provider| {
-            row.prices
-                .get(&provider.id)
-                .map(|price| price.to_string())
-                .unwrap_or_default()
-        }));
-        writer.write_record(&record)?;
-    }
-    writer.flush()?;
-    let bytes = writer
-        .into_inner()
-        .map_err(|e| anyhow::anyhow!("could not finalize CSV export: {e}"))?;
-    let mut csv = String::from_utf8(bytes)
-        .map_err(|e| anyhow::anyhow!("CSV export is not valid UTF-8: {e}"))?;
-    csv.insert(0, '\u{feff}');
-    Ok(csv)
+pub fn matrix_to_csv(matrix: &Matrix) -> String {
+    let header: Vec<String> = std::iter::once("Product".to_string())
+        .chain(matrix.providers.iter().map(|p| p.domain.clone()))
+        .collect();
+    let rows: Vec<Vec<String>> = matrix
+        .rows
+        .iter()
+        .map(|row| {
+            let mut record = vec![row.name.clone()];
+            record.extend(matrix.providers.iter().map(|provider| {
+                row.prices
+                    .get(&provider.id)
+                    .map(|price| price.to_string())
+                    .unwrap_or_default()
+            }));
+            record
+        })
+        .collect();
+    tables_to_csv(&header, &rows)
 }
 
 /// Serializes the canonical products as CSV with `brand,product_name`
 /// columns, one row per product sorted by brand, then product_name.
 /// All values are lowercased and folded to ASCII. A UTF-8 BOM is prepended so
 /// Excel detects the encoding.
-pub fn products_to_csv(products: &[ProductRow]) -> Result<String> {
+pub fn products_to_csv(products: &[ProductRow]) -> String {
     let mut order: Vec<usize> = (0..products.len()).collect();
     order.sort_by(|&a, &b| {
         let pa = &products[a];
@@ -89,44 +78,32 @@ pub fn products_to_csv(products: &[ProductRow]) -> Result<String> {
             .cmp(&ascii_fold(&pb.brand))
             .then_with(|| ascii_fold(&pa.product_name).cmp(&ascii_fold(&pb.product_name)))
     });
-    let mut writer = csv::Writer::from_writer(Vec::new());
-    writer.write_record(["brand", "product_name"])?;
-    for i in order {
-        let product = &products[i];
-        writer.write_record([
-            ascii_fold(&product.brand).as_str(),
-            ascii_fold(&product.product_name).as_str(),
-        ])?;
-    }
-    writer.flush()?;
-    let bytes = writer
-        .into_inner()
-        .map_err(|e| anyhow::anyhow!("could not finalize CSV export: {e}"))?;
-    let mut csv = String::from_utf8(bytes)
-        .map_err(|e| anyhow::anyhow!("CSV export is not valid UTF-8: {e}"))?;
-    csv.insert(0, '\u{feff}');
-    Ok(csv)
+    let header = vec!["brand".to_string(), "product_name".to_string()];
+    let rows: Vec<Vec<String>> = order
+        .into_iter()
+        .map(|i| {
+            let product = &products[i];
+            vec![
+                ascii_fold(&product.brand),
+                ascii_fold(&product.product_name),
+            ]
+        })
+        .collect();
+    tables_to_csv(&header, &rows)
 }
 
 /// Serializes the canonical brands as CSV with a single `name` column, one
 /// row per brand sorted by name. Values are lowercased and folded to ASCII. A
 /// UTF-8 BOM is prepended so Excel detects the encoding.
-pub fn brands_to_csv(brands: &[BrandRow]) -> Result<String> {
+pub fn brands_to_csv(brands: &[BrandRow]) -> String {
     let mut order: Vec<usize> = (0..brands.len()).collect();
     order.sort_by(|&a, &b| ascii_fold(&brands[a].name).cmp(&ascii_fold(&brands[b].name)));
-    let mut writer = csv::Writer::from_writer(Vec::new());
-    writer.write_record(["name"])?;
-    for i in order {
-        writer.write_record([ascii_fold(&brands[i].name).as_str()])?;
-    }
-    writer.flush()?;
-    let bytes = writer
-        .into_inner()
-        .map_err(|e| anyhow::anyhow!("could not finalize CSV export: {e}"))?;
-    let mut csv = String::from_utf8(bytes)
-        .map_err(|e| anyhow::anyhow!("CSV export is not valid UTF-8: {e}"))?;
-    csv.insert(0, '\u{feff}');
-    Ok(csv)
+    let header = vec!["name".to_string()];
+    let rows: Vec<Vec<String>> = order
+        .into_iter()
+        .map(|i| vec![ascii_fold(&brands[i].name)])
+        .collect();
+    tables_to_csv(&header, &rows)
 }
 
 #[cfg(test)]
@@ -135,7 +112,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use crate::domain::model::{MatrixProvider, MatrixRow};
+    use crate::model::{MatrixProvider, MatrixRow};
 
     #[test]
     fn brands_to_csv_writes_single_name_column_sorted_and_folded() {
@@ -153,7 +130,7 @@ mod tests {
                 name: "Alfa".to_string(),
             },
         ];
-        let csv = brands_to_csv(&brands).unwrap();
+        let csv = brands_to_csv(&brands);
         assert!(csv.starts_with('\u{feff}'));
         let body = csv.trim_start_matches('\u{feff}');
         assert_eq!(body, "name\nalfa\nbambu\nzeta\n");
@@ -199,7 +176,7 @@ mod tests {
                 product_name: "Agua de Bambu Man EDP".to_string(),
             },
         ];
-        let csv = products_to_csv(&products).unwrap();
+        let csv = products_to_csv(&products);
         assert!(csv.starts_with('\u{feff}'));
         let body = csv.trim_start_matches('\u{feff}');
         assert_eq!(
@@ -212,18 +189,6 @@ mod tests {
              alfa,shower gel\n\
              zeta,edp 100\n"
         );
-    }
-
-    #[test]
-    fn ascii_fold_lowercases_and_transliterates() {
-        assert_eq!(ascii_fold("Bambú"), "bambu");
-        assert_eq!(ascii_fold("Agua de Bambú EDT"), "agua de bambu edt");
-        assert_eq!(ascii_fold("Benoît"), "benoit");
-        assert_eq!(ascii_fold("José Ñoño"), "jose nono");
-        assert_eq!(ascii_fold("François Straße"), "francois strasse");
-        assert_eq!(ascii_fold("A’B"), "a'b");
-        assert_eq!(ascii_fold("\u{feff}abc\u{200b}"), "abc");
-        assert_eq!(ascii_fold("30° C"), "30° c");
     }
 
     #[test]
@@ -262,7 +227,7 @@ mod tests {
                 },
             ],
         };
-        let csv = matrix_to_csv(&matrix).unwrap();
+        let csv = matrix_to_csv(&matrix);
         assert!(csv.starts_with('\u{feff}'));
         let body = csv.trim_start_matches('\u{feff}');
         assert_eq!(
@@ -271,5 +236,12 @@ mod tests {
              Alfa EDP 50 ml,242100,\n\
              Beta EDP 100 ml,242100,253000.5\n"
         );
+    }
+
+    #[test]
+    fn escape_field_quotes_commas_and_quotes() {
+        assert_eq!(escape_field("plain"), "plain");
+        assert_eq!(escape_field("a,b"), "\"a,b\"");
+        assert_eq!(escape_field("say \"hi\""), "\"say \"\"hi\"\"\"");
     }
 }

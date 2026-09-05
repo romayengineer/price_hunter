@@ -1,6 +1,6 @@
 use crate::common;
 
-use price_hunter_core::detect::Product;
+use price_hunter_domain::model::Product;
 
 // prices are under class mobile-product-price-price-number
 fn products() -> Vec<Product> {

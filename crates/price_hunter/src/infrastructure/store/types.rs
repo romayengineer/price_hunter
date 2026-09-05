@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::domain::model::ProviderMatchRow;
+use price_hunter_domain::model::ProviderMatchRow;
 
 pub(super) const PRODUCTS_COLLECTION: &str = "products";
 pub(super) const BRANDS_COLLECTION: &str = "brand";
@@ -154,7 +154,7 @@ pub(super) struct ProviderPricePayload {
 #[allow(clippy::cognitive_complexity)]
 mod tests {
     use super::*;
-    use crate::domain::time::iso8601;
+    use price_hunter_domain::time::iso8601;
 
     #[test]
     fn scrape_payload_serializes_detection_fields() {

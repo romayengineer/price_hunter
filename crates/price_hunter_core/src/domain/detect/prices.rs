@@ -6,8 +6,8 @@ use ego_tree::{NodeId, NodeRef};
 use scraper::Html;
 use scraper::node::{Element, Node};
 
-use super::Price;
 use super::extract::{find_structured_name, largest_text_block};
+use price_hunter_domain::model::Price;
 use price_hunter_domain::text as domain_text;
 
 pub(super) fn find_price_divs(html: &Html) -> Vec<(NodeId, Vec<Price>)> {

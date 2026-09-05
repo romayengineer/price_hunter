@@ -4,8 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1"
-csv = "1"
 price_hunter_domain = { path = "../price_hunter_domain" }
 scraper = "0.27"
 serde = { version = "1", features = ["derive"] }

@@ -7,8 +7,8 @@ use scraper::Html;
 use scraper::node::Node;
 
 use super::prices::{classify_div, contains_confident_price};
-use super::{Price, Product};
-use crate::domain::matching::{BRAND_MIN_SCORE, best_match, brand_coverage};
+use price_hunter_domain::matching::{BRAND_MIN_SCORE, best_match, brand_coverage};
+use price_hunter_domain::model::{Price, Product};
 use price_hunter_domain::text::collapse_whitespace;
 
 pub(super) fn extract_products(

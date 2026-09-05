@@ -9,7 +9,8 @@
 
 mod support;
 
-use price_hunter_core::detect::{Detection, diagnose_containers, detect_grid};
+use price_hunter_core::detect::{diagnose_containers, detect_grid};
+use price_hunter_domain::model::Detection;
 use scraper::Html;
 use support::catalog::fixed_products;
 use support::renderer::{render_template_by_idx, template_name};
@@ -71,7 +72,7 @@ macro_rules! gen_test {
 fn dump_and_panic(
     idx: usize,
     html: &str,
-    diag: &[price_hunter_core::detect::ContainerCandidate],
+    diag: &[price_hunter_domain::model::ContainerCandidate],
     msg: &str,
 ) -> ! {
     let dir = "target/tmp";
@@ -151,7 +152,7 @@ gen_test!(generated_variant_49, 49);
 fn assert_all_products_found(
     idx: usize,
     det: &Detection,
-    products: &[price_hunter_core::detect::Product],
+    products: &[price_hunter_domain::model::Product],
 ) {
     for exp in products {
         assert!(
@@ -166,7 +167,7 @@ fn assert_all_products_found(
 
 fn assert_template_roundtrip(
     idx: usize,
-    products: &[price_hunter_core::detect::Product],
+    products: &[price_hunter_domain::model::Product],
 ) {
     let html = render_template_by_idx(idx, products);
     // parse check

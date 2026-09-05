@@ -1,9 +1,9 @@
 //! Tests for the canonical-product promotion use case (`propose_unmatched`,
 //! `create_product`) run against the in-memory [`FakeStore`](super::fakes::FakeStore).
 
-use price_hunter_core::application::imports::propose_unmatched;
-use price_hunter_core::domain::model::{BrandRow, ProductInsert, ProductRow, ProviderProductRow};
-use price_hunter_core::domain::ports::ProductCatalog;
+use price_hunter_domain::usecases::imports::propose_unmatched;
+use price_hunter_domain::model::{BrandRow, ProductInsert, ProductRow, ProviderProductRow};
+use price_hunter_domain::ports::ProductCatalog;
 
 use super::fakes::FakeStore;
 
@@ -71,7 +71,7 @@ fn propose_unmatched_splits_brand_size_and_skips_linked_existing_and_duplicates(
     assert_eq!(proposals.len(), 2);
     assert_eq!(
         proposals[0],
-        price_hunter_core::application::imports::ProposedProduct {
+        price_hunter_domain::usecases::imports::ProposedProduct {
             provider_product_id: "pp1".to_string(),
             source_name: "Moschino Gold Fresh Couture EDP 100 Ml".to_string(),
             brand: "moschino".to_string(),
@@ -81,7 +81,7 @@ fn propose_unmatched_splits_brand_size_and_skips_linked_existing_and_duplicates(
     );
     assert_eq!(
         proposals[1],
-        price_hunter_core::application::imports::ProposedProduct {
+        price_hunter_domain::usecases::imports::ProposedProduct {
             provider_product_id: "pp3".to_string(),
             source_name: "Adidas Vibes Smooth Pace EDP Unisex 100 Ml".to_string(),
             brand: String::new(),

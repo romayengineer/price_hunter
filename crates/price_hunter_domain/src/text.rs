@@ -241,6 +241,47 @@ pub fn is_placeholder_href(href: &str) -> bool {
     href.ends_with('#')
 }
 
+/// Lowercases `s` and replaces non-ASCII characters with their closest ASCII
+/// match: accented Latin letters lose their diacritics (`bambú` → `bambu`,
+/// `Benoît` → `benoit`), curly quotes and acute accents become `'`, and zero-
+/// width / BOM characters are dropped. Characters with no ASCII equivalent are
+/// left unchanged. Used both as the sort key and for the CSV output, so a
+/// lowercase, ASCII-only file round-trips deterministically and sorts by the
+/// base letters (`bambú` and `bambu` compare equal, then the rest of the name
+/// decides the order).
+pub fn ascii_fold(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        fold_char(c, &mut out);
+    }
+    out
+}
+
+/// Appends the lowercase ASCII fold of `c` (possibly several chars, e.g.
+/// `ß` → `ss`, or none for zero-width marks) to `out`.
+fn fold_char(c: char, out: &mut String) {
+    match c {
+        '\u{feff}' | '\u{200b}' | '\u{200c}' | '\u{200d}' => {}
+        c if c.is_ascii() => out.push(c.to_ascii_lowercase()),
+        c => match c.to_lowercase().to_string().as_str() {
+            "à" | "á" | "â" | "ã" | "ä" | "å" => out.push('a'),
+            "è" | "é" | "ê" | "ë" => out.push('e'),
+            "ì" | "í" | "î" | "ï" => out.push('i'),
+            "ò" | "ó" | "ô" | "õ" | "ö" | "ø" => out.push('o'),
+            "ù" | "ú" | "û" | "ü" => out.push('u'),
+            "ñ" => out.push('n'),
+            "ç" => out.push('c'),
+            "ß" => out.push_str("ss"),
+            "ÿ" => out.push('y'),
+            "æ" => out.push_str("ae"),
+            "œ" => out.push_str("oe"),
+            "\u{00b4}" | "\u{2018}" | "\u{2019}" | "\u{201a}" | "\u{201b}" | "\u{02b9}"
+            | "\u{02bc}" => out.push('\''),
+            _ => out.push(c),
+        },
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::cognitive_complexity)]
 mod tests {
@@ -283,5 +324,17 @@ mod tests {
         assert!(is_placeholder_href("javascript:void(0)"));
         assert!(is_placeholder_href("https://site/category#"));
         assert!(!is_placeholder_href("/producto/axe-gold-150-ml"));
+    }
+
+    #[test]
+    fn ascii_fold_lowercases_and_transliterates() {
+        assert_eq!(ascii_fold("Bambú"), "bambu");
+        assert_eq!(ascii_fold("Agua de Bambú EDT"), "agua de bambu edt");
+        assert_eq!(ascii_fold("Benoît"), "benoit");
+        assert_eq!(ascii_fold("José Ñoño"), "jose nono");
+        assert_eq!(ascii_fold("François Straße"), "francois strasse");
+        assert_eq!(ascii_fold("A’B"), "a'b");
+        assert_eq!(ascii_fold("\u{feff}abc\u{200b}"), "abc");
+        assert_eq!(ascii_fold("30° C"), "30° c");
     }
 }
